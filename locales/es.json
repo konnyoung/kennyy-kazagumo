@@ -421,9 +421,9 @@
     },
     "player": {
       "queue_finished": {
-        "title": "{topgg_emoji} ¡Por favor, vota por mí en Top.gg!",
-        "description": "¿Te gusta? Deja tu voto cada 12 horas y ayuda al bot a seguir activo [haciendo clic aquí](https://top.gg/bot/920133124095098881)",
-        "footer": "Usa /play de nuevo cuando quieras"
+        "title": "Cola Finalizada",
+        "website": "Sitio Web",
+        "support": "Servidor de Soporte"
       }
     }
   }

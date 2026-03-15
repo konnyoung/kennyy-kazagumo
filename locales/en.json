@@ -303,6 +303,18 @@
           "success_title": "🚫 Restart canceled",
           "success_description": "Scheduled restart canceled successfully."
         }
+      },
+      "lock": {
+        "modal_title": "Lock Configuration",
+        "modal_label_title": "Embed Title",
+        "modal_placeholder_title": "e.g. 🔒 Under Maintenance",
+        "modal_label_description": "Embed Description",
+        "modal_placeholder_description": "e.g. We'll be back shortly!",
+        "modal_label_link": "Button Link {n} (Label | URL)",
+        "enabled_title": "🔒 Commands Locked",
+        "enabled_description": "All commands have been locked for non-admin users.",
+        "disabled_title": "🔓 Commands Unlocked",
+        "disabled_description": "All commands are now available again."
       }
     },
     "help": {
@@ -421,9 +433,9 @@
     },
     "player": {
       "queue_finished": {
-        "title": "{topgg_emoji} Please vote for me on Top.gg!",
-        "description": "Enjoying it? Leave a vote every 12 hours and help keep the bot online [by clicking here](https://top.gg/bot/920133124095098881)",
-        "footer": "Use /play again whenever you want"
+        "title": "Queue Finished",
+        "website": "Website",
+        "support": "Support Server"
       }
     }
   }

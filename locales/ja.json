@@ -419,9 +419,9 @@
     },
     "player": {
       "queue_finished": {
-        "title": "{topgg_emoji} Top.ggで投票お願いします！",
-        "description": "気に入ってくれたら12時間ごとに投票してボットを応援してください。[ここをクリック](https://top.gg/bot/920133124095098881)",
-        "footer": "いつでも /play を使ってね"
+        "title": "キュー終了",
+        "website": "ウェブサイト",
+        "support": "サポートサーバー"
       }
     }
   }

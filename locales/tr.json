@@ -419,9 +419,9 @@
     },
     "player": {
       "queue_finished": {
-        "title": "{topgg_emoji} Lütfen Top.gg'de oy verin!",
-        "description": "Beğendiyseniz, her 12 saatte bir oy verin ve botun aktif kalmasına yardımcı olun [buraya tıklayarak](https://top.gg/bot/920133124095098881)",
-        "footer": "İstediğiniz zaman /play komutunu kullanın"
+        "title": "Sıra Tamamlandı",
+        "website": "Web Sitesi",
+        "support": "Destek Sunucusu"
       }
     }
   }

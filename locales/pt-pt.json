@@ -419,9 +419,9 @@
     },
     "player": {
       "queue_finished": {
-        "title": "{topgg_emoji} Por favorzinho, vote em mim no Top.gg!",
-        "description": "Estás a gostar? Dá um voto a cada 12 horas e ajuda o bot a continuar ativo [clicando aqui](https://top.gg/bot/920133124095098881)",
-        "footer": "Usa /play novamente quando quiseres"
+        "title": "Fila Terminada",
+        "website": "Website",
+        "support": "Servidor de Suporte"
       }
     }
   }

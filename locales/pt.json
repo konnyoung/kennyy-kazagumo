@@ -301,6 +301,18 @@
           "success_title": "🚫 Reinicialização cancelada",
           "success_description": "Reinicialização agendada cancelada com sucesso."
         }
+      },
+      "lock": {
+        "modal_title": "Configuração de Bloqueio",
+        "modal_label_title": "Título da Embed",
+        "modal_placeholder_title": "ex: 🔒 Em Manutenção",
+        "modal_label_description": "Descrição da Embed",
+        "modal_placeholder_description": "ex: Voltamos em breve!",
+        "modal_label_link": "Link Botão {n} (Texto | URL)",
+        "enabled_title": "🔒 Comandos Bloqueados",
+        "enabled_description": "Todos os comandos foram bloqueados para usuários não-admin.",
+        "disabled_title": "🔓 Comandos Desbloqueados",
+        "disabled_description": "Todos os comandos estão disponíveis novamente."
       }
     },
     "help": {
@@ -419,9 +431,9 @@
     },
     "player": {
       "queue_finished": {
-        "title": "{topgg_emoji} Por favorzinho, vote em mim no Top.gg!",
-        "description": "Está gostando? Dê um voto a cada 12 horas e ajude o bot a continuar ativo [clicando aqui](https://top.gg/bot/920133124095098881)",
-        "footer": "Use /play novamente quando quiser"
+        "title": "Fila Finalizada",
+        "website": "Website",
+        "support": "Servidor de Suporte"
       }
     }
   }

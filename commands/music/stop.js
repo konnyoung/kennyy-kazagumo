@@ -20,7 +20,9 @@ module.exports = {
       return interaction.reply({ content: t('common.not_same_channel'), ephemeral: true });
     }
 
-    await player.destroy();
+    player.queue.clear();
+    try { player.shoukaku.stopTrack(); } catch {}
+    try { await player.destroy(); } catch {}
     return interaction.reply({ content: t('commands.stop.success'), ephemeral: true });
   }
 };

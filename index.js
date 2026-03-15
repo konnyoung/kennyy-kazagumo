@@ -252,8 +252,29 @@ client.softRestart = async () => {
   }
 };
 
-client.kazagumo.shoukaku.on('ready', name => {
+client.kazagumo.shoukaku.on('ready', async name => {
   log(`🟢 Lavalink: Nó '${name}' está pronto!`);
+
+  // Quando um node reconecta, destruir todos os players desse node
+  // para evitar "Session not found" - força rebuild com nova sessão
+  const affectedPlayers = Array.from(client.kazagumo.players.values()).filter(player => {
+    const playerNodeName = player?.shoukaku?.node?.name;
+    return playerNodeName === name;
+  });
+
+  if (affectedPlayers.length > 0) {
+    log(`[Reconnect] Limpando ${affectedPlayers.length} player(s) do nó reconectado '${name}'...`);
+    for (const player of affectedPlayers) {
+      try {
+        await player.destroy();
+        log(`[Reconnect] Player ${player.guildId} destruído com sucesso.`);
+      } catch (error) {
+        // Força remoção se destroy falhar
+        client.kazagumo.players.delete(player.guildId);
+        log(`[Reconnect] Player ${player.guildId} removido forcadamente.`);
+      }
+    }
+  }
 });
 
 client.kazagumo.shoukaku.on('error', (name, error) => {
@@ -341,14 +362,15 @@ client.kazagumo.on('playerEmpty', async player => {
     const channel = client.channels.cache.get(player.textId);
     
     if (channel) {
-      const topggEmoji = process.env.EMOJI_TOPGG || '<:topgg:1446666109125394495>';
       const embed = new EmbedBuilder()
-        .setTitle(t('logs.player.queue_finished.title', { topgg_emoji: topggEmoji }))
-        .setDescription(t('logs.player.queue_finished.description'))
-        .setFooter({ text: t('logs.player.queue_finished.footer') })
-        .setColor(0xFF3366);
+        .setTitle(t('logs.player.queue_finished.title'));
       
-      await channel.send({ embeds: [embed] });
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setLabel(t('logs.player.queue_finished.website')).setURL('https://kennyy.com.br').setStyle(ButtonStyle.Link),
+        new ButtonBuilder().setLabel(t('logs.player.queue_finished.support')).setURL('https://discord.gg/3sTbFm8WRt').setStyle(ButtonStyle.Link)
+      );
+      
+      await channel.send({ embeds: [embed], components: [row] });
     }
   } catch (error) {
     console.error('Erro ao enviar embed de fila finalizada:', error);
@@ -356,10 +378,10 @@ client.kazagumo.on('playerEmpty', async player => {
   
   // Desconecta do canal de voz
   try {
-    await player.destroy();
-  } catch (error) {
-    console.error('Erro ao desconectar:', error);
-  }
+    if (client.kazagumo.players.get(player.guildId)) {
+      await player.destroy();
+    }
+  } catch {}
 });
 
 client.kazagumo.on('playerDestroy', async player => {
@@ -636,17 +658,40 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
 });
 
 client.on(Events.InteractionCreate, async interaction => {
-  const t = await getTranslator(client, interaction.guildId);
-
   if (interaction.isChatInputCommand()) {
     const command = client.commands.get(interaction.commandName);
     if (!command) {
+      const t = await getTranslator(client, interaction.guildId);
       return interaction.reply({ content: t('errors.unknown_command'), ephemeral: true });
+    }
+
+    // Check global command lock (only bot owners bypass)
+    if (client._commandLock?.enabled && interaction.commandName !== 'admin') {
+      const ownerIds = (process.env.BOT_OWNER_IDS || '').split(',').map(id => id.trim()).filter(Boolean);
+      const isOwner = ownerIds.includes(String(interaction.user.id));
+      if (!isOwner) {
+        const lock = client._commandLock;
+        const embed = new EmbedBuilder()
+          .setColor(0xed4245)
+          .setTitle(lock.title || '🔒')
+          .setDescription(lock.description || '...')
+          .setTimestamp();
+
+        const replyPayload = { embeds: [embed], ephemeral: true };
+
+        if (lock.buttons?.length) {
+          const row = new ActionRowBuilder().addComponents(...lock.buttons);
+          replyPayload.components = [row];
+        }
+
+        return interaction.reply(replyPayload);
+      }
     }
 
     try {
       await command.execute(interaction, client);
     } catch (error) {
+      const t = await getTranslator(client, interaction.guildId);
       log(`Command error ${interaction.commandName}: ${error.message}`);
 
       // Only attempt Lavalink reconnects for music-related commands (async, don't wait)
@@ -671,9 +716,47 @@ client.on(Events.InteractionCreate, async interaction => {
     }
   } else if (interaction.isButton()) {
     try {
+      const t = await getTranslator(client, interaction.guildId);
       await handlePlaybackButton(interaction, t);
     } catch (error) {
       log(`Unhandled button interaction error: ${error.message}`);
+    }
+  } else if (interaction.isModalSubmit() && interaction.customId === 'admin_lock_modal') {
+    try {
+      log('[Lock] Modal submitted');
+      const t = await getTranslator(client, interaction.guildId);
+      const lockTitle = interaction.fields.getTextInputValue('lock_title');
+      const lockDescription = interaction.fields.getTextInputValue('lock_description');
+      const link1 = interaction.fields.getTextInputValue('lock_link1')?.trim() || '';
+      const link2 = interaction.fields.getTextInputValue('lock_link2')?.trim() || '';
+      const link3 = interaction.fields.getTextInputValue('lock_link3')?.trim() || '';
+
+      const buttons = [];
+      for (const raw of [link1, link2, link3]) {
+        if (!raw) continue;
+        const sepIndex = raw.indexOf('|');
+        if (sepIndex === -1) continue;
+        const label = raw.slice(0, sepIndex).trim();
+        const url = raw.slice(sepIndex + 1).trim();
+        if (!label || !url || !/^https?:\/\//.test(url)) continue;
+        buttons.push(new ButtonBuilder().setLabel(label).setURL(url).setStyle(ButtonStyle.Link));
+      }
+
+      client._commandLock = { enabled: true, title: lockTitle, description: lockDescription, buttons };
+      log(`[Lock] Enabled. Title: ${lockTitle}, Buttons: ${buttons.length}`);
+
+      const embed = new EmbedBuilder()
+        .setColor(0xed4245)
+        .setTitle(t('commands.admin.lock.enabled_title'))
+        .setDescription(t('commands.admin.lock.enabled_description'))
+        .setTimestamp();
+
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+    } catch (error) {
+      log(`Lock modal error: ${error.message}`);
+      try {
+        await interaction.reply({ content: 'Something went wrong.', ephemeral: true });
+      } catch { /* ignore */ }
     }
   }
 });
@@ -817,16 +900,18 @@ async function handlePlaybackButton(interaction, providedT) {
       await refreshNowPlayingMessage(player);
     },
     'music-playpause': async () => {
-      player.pause(!player.paused);
+      await player.pause(!player.paused);
       await interaction.deferUpdate();
       await refreshNowPlayingMessage(player);
     },
     'music-stop': async () => {
-      await player.destroy();
       await interaction.deferUpdate();
+      player.queue.clear();
+      try { player.shoukaku.stopTrack(); } catch {}
+      try { await player.destroy(); } catch {}
     },
     'music-skip': async () => {
-      player.skip();
+      await player.skip();
       await interaction.deferUpdate();
     },
     'music-loop': async () => {
@@ -1182,28 +1267,28 @@ function buildPlaybackComponents(player, t) {
   const loopStyle = loopMode === 'none' ? ButtonStyle.Secondary : ButtonStyle.Success;
   return [
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('music-volume-down').setEmoji('🔉').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId('music-volume-up').setEmoji('🔊').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('music-volume-down').setEmoji({ id: '1482495400782069966', name: '1_volumedown' }).setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('music-volume-up').setEmoji({ id: '1482495442070540308', name: '2_volumeup' }).setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId('music-playpause')
-        .setEmoji(isPaused ? '▶️' : '⏸️')
+        .setEmoji(isPaused ? { id: '1482495548249608197', name: '3_play' } : { id: '1482495598576799794', name: '3_pause' })
         .setStyle(isPaused ? ButtonStyle.Success : ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId('music-skip').setEmoji('⏭️').setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId('music-stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger)
+      new ButtonBuilder().setCustomId('music-skip').setEmoji({ id: '1482495649994772580', name: '4_skip' }).setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('music-stop').setEmoji({ id: '1482495681691128018', name: '5_stop' }).setStyle(ButtonStyle.Danger)
     ),
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId('music-shuffle')
-        .setEmoji('🔀')
+        .setEmoji({ id: '1482495731498750152', name: '6_shuffle' })
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId('music-loop')
-        .setEmoji(loopMode === 'queue' ? '🔁' : '🔂')
+        .setEmoji({ id: '1482495766269526126', name: '7_loop' })
         .setLabel(loopLabel)
         .setStyle(loopStyle),
       new ButtonBuilder()
         .setCustomId('music-lyrics')
-        .setEmoji('📜')
+        .setEmoji({ id: '1482495799408722162', name: '8_lyrics' })
         .setStyle(ButtonStyle.Secondary)
     )
   ];
@@ -2100,7 +2185,10 @@ function setupAntiCrash() {
     if (!error) return false;
     if (error?.name === 'AbortError') return true;
     const text = stringifyError(error);
-    return typeof text === 'string' && text.includes('AbortError: The operation was aborted');
+    if (typeof text === 'string' && text.includes('AbortError: The operation was aborted')) return true;
+    // Shoukaku race condition: Player.update() fires after player is already destroyed
+    if (error?.message === 'Player not found.' || (typeof text === 'string' && text.includes('Player not found.'))) return true;
+    return false;
   };
 
   const forward = (type, error) => {

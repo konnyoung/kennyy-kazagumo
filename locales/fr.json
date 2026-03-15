@@ -421,9 +421,9 @@
     },
     "player": {
       "queue_finished": {
-        "title": "{topgg_emoji} S'il te plaît, vote pour moi sur Top.gg !",
-        "description": "Tu aimes ? Laisse un vote toutes les 12 heures et aide le bot à rester actif [en cliquant ici](https://top.gg/bot/920133124095098881)",
-        "footer": "Utilise /play à nouveau quand tu veux"
+        "title": "File d'attente terminée",
+        "website": "Site Web",
+        "support": "Serveur de Support"
       }
     }
   }

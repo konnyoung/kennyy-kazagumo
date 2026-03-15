@@ -419,9 +419,9 @@
     },
     "player": {
       "queue_finished": {
-        "title": "{topgg_emoji} Per favore, votami su Top.gg!",
-        "description": "Ti piace? Lascia un voto ogni 12 ore e aiuta il bot a restare attivo [cliccando qui](https://top.gg/bot/920133124095098881)",
-        "footer": "Usa /play di nuovo quando vuoi"
+        "title": "Coda Terminata",
+        "website": "Sito Web",
+        "support": "Server di Supporto"
       }
     }
   }

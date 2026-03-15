@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { getTranslator } = require('../utils/localeHelpers');
 const { serializeActivity, buildPresencePayload, sanitizeStatusKey } = require('../utils/presenceStore');
 
@@ -96,6 +96,21 @@ module.exports = {
             .addChoices(...RESTART_ACTION_CHOICES)
         )
     )
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('lock')
+        .setDescription('Lock or unlock bot commands for non-admins')
+        .addStringOption(option =>
+          option
+            .setName('mode')
+            .setDescription('Enable or disable the lock')
+            .setRequired(true)
+            .addChoices(
+              { name: 'On', value: 'on' },
+              { name: 'Off', value: 'off' }
+            )
+        )
+    )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   async execute(interaction, client) {
     const t = await getTranslator(client, interaction.guildId);
@@ -114,6 +129,9 @@ module.exports = {
     }
     if (subcommand === 'restart') {
       return handleRestart(interaction, client, t);
+    }
+    if (subcommand === 'lock') {
+      return handleLock(interaction, client, t);
     }
     return interaction.reply({ content: t('errors.unknown_command'), ephemeral: true });
   }
@@ -477,4 +495,75 @@ async function destroyAllPlayers(client) {
       // ignore
     }
   }
+}
+
+async function handleLock(interaction, client, t) {
+  const mode = interaction.options.getString('mode', true);
+
+  if (mode === 'off') {
+    client._commandLock = { enabled: false };
+
+    const embed = new EmbedBuilder()
+      .setColor(0x57f287)
+      .setTitle(t('commands.admin.lock.disabled_title'))
+      .setDescription(t('commands.admin.lock.disabled_description'))
+      .setTimestamp();
+
+    return interaction.reply({ embeds: [embed], ephemeral: true });
+  }
+
+  // mode === 'on' → show modal for customization
+  const modal = new ModalBuilder()
+    .setCustomId('admin_lock_modal')
+    .setTitle(t('commands.admin.lock.modal_title'));
+
+  const titleInput = new TextInputBuilder()
+    .setCustomId('lock_title')
+    .setLabel(t('commands.admin.lock.modal_label_title'))
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder(t('commands.admin.lock.modal_placeholder_title'))
+    .setRequired(true)
+    .setMaxLength(256);
+
+  const descInput = new TextInputBuilder()
+    .setCustomId('lock_description')
+    .setLabel(t('commands.admin.lock.modal_label_description'))
+    .setStyle(TextInputStyle.Paragraph)
+    .setPlaceholder(t('commands.admin.lock.modal_placeholder_description'))
+    .setRequired(true)
+    .setMaxLength(2000);
+
+  const link1Input = new TextInputBuilder()
+    .setCustomId('lock_link1')
+    .setLabel(t('commands.admin.lock.modal_label_link', { n: '1' }))
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder('Label | https://example.com')
+    .setRequired(false)
+    .setMaxLength(200);
+
+  const link2Input = new TextInputBuilder()
+    .setCustomId('lock_link2')
+    .setLabel(t('commands.admin.lock.modal_label_link', { n: '2' }))
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder('Label | https://example.com')
+    .setRequired(false)
+    .setMaxLength(200);
+
+  const link3Input = new TextInputBuilder()
+    .setCustomId('lock_link3')
+    .setLabel(t('commands.admin.lock.modal_label_link', { n: '3' }))
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder('Label | https://example.com')
+    .setRequired(false)
+    .setMaxLength(200);
+
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(titleInput),
+    new ActionRowBuilder().addComponents(descInput),
+    new ActionRowBuilder().addComponents(link1Input),
+    new ActionRowBuilder().addComponents(link2Input),
+    new ActionRowBuilder().addComponents(link3Input)
+  );
+
+  await interaction.showModal(modal);
 }

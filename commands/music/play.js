@@ -22,11 +22,10 @@ module.exports = {
         .setRequired(true)
     ),
   async execute(interaction, client) {
-    const t = await getTranslator(client, interaction.guildId);
-    
     // Defer IMMEDIATELY to prevent interaction timeout
     await interaction.deferReply();
     
+    const t = await getTranslator(client, interaction.guildId);
     const query = interaction.options.getString('query', true);
     const voiceChannel = interaction.member?.voice?.channel;
 
@@ -128,8 +127,12 @@ module.exports = {
 
     try {
       const requester = interaction.user;
-
-      const result = await client.kazagumo.search(query, { requester });
+      const isUrl = /^https?:\/\//.test(query);
+      const searchOptions = { requester };
+      if (!isUrl) {
+        searchOptions.source = 'spsearch:';
+      }
+      const result = await client.kazagumo.search(query, searchOptions);
 
       if (!result.tracks?.length) {
         const noResultsEmbed = new EmbedBuilder()
