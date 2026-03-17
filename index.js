@@ -4,17 +4,24 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {
   ActionRowBuilder,
+  AttachmentBuilder,
   ButtonBuilder,
   ButtonStyle,
   Client,
   Collection,
-  EmbedBuilder,
+  ContainerBuilder,
   Events,
   GatewayIntentBits,
+  MediaGalleryBuilder,
+  MediaGalleryItemBuilder,
+  MessageFlags,
   Partials,
   REST,
-  Routes
+  Routes,
+  SeparatorBuilder,
+  TextDisplayBuilder
 } = require('discord.js');
+const { createCanvas, loadImage } = require('@napi-rs/canvas');
 const { Kazagumo } = require('kazagumo');
 const { Connectors, Constants } = require('shoukaku');
 const Spotify = require('kazagumo-spotify');
@@ -25,6 +32,7 @@ const { createLogSettingsStore } = require('./utils/logSettingsStore');
 const { createPresenceStore } = require('./utils/presenceStore');
 const { getTranslator } = require('./utils/localeHelpers');
 const { fetchLyrics, findLineIndex, renderTimedSnippet, getApproxPositionMs } = require('./utils/lyricsManager');
+const { buildV2Container, v2Payload, v2Reply } = require('./utils/embedV2');
 const { createQueueCacheStore } = require('./utils/queueCacheStore');
 
 console.log('🚀 Iniciando Music Bot...');
@@ -38,12 +46,12 @@ if (!DISCORD_TOKEN) {
 
 const TRACK_SOURCE_ICONS = Object.freeze({
   ytmusic: process.env.EMOJI_YTMUSIC || '<:ytmusic:1446620983267037395>',
-  youtube: process.env.EMOJI_YOUTUBE || '<:youtube:1446621413179002991>',
-  deezer: process.env.EMOJI_DEEZER || '<:deezer:1448437794090520658>',
+  youtube: process.env.EMOJI_YOUTUBE || '<:youtube:1483286021297672315>',
+  deezer: process.env.EMOJI_DEEZER || '<:deezer:1483286023604670674>',
   spotify: process.env.EMOJI_SPOTIFY || '<:spotify:1446621523631931423>',
-  applemusic: process.env.EMOJI_APPLEMUSIC || '<:apple_music:1448505821142061210>',
-  soundcloud: process.env.EMOJI_SOUNDCLOUD || '<:soundcloud:1446621634294452275>',
-  twitch: process.env.EMOJI_TWITCH || '<:twitch:1446621864787968163>'
+  applemusic: process.env.EMOJI_APPLEMUSIC || '<:applemusic:1483286022401036408>',
+  soundcloud: process.env.EMOJI_SOUNDCLOUD || '<:soundcloud:1483286020005826660>',
+  twitch: process.env.EMOJI_TWITCH || '<:twitch:1483286084514484286>'
 });
 
 const TRACK_SOURCE_COLORS = Object.freeze({
@@ -303,14 +311,13 @@ async function sendLavalinkErrorMessage(nodeName) {
       const title = t('errors.lavalink_error_title');
       const description = t('errors.lavalink_error_description');
       
-      const embed = new EmbedBuilder()
-        .setColor(0xff6b6b)
-        .setTitle(`${process.env.EMOJI_SCARED || '<a:scared:1451994355358499040>'} ${title}`)
-        .setDescription(description)
-        .setFooter({ text: `Node: ${nodeName}` })
-        .setTimestamp();
-      
-      await textChannel.send({ embeds: [embed] });
+      await textChannel.send(v2Reply({
+        color: 0xff6b6b,
+        title: `${process.env.EMOJI_SCARED || '<a:scared:1451994355358499040>'} ${title}`,
+        description,
+        footer: `Node: ${nodeName}`,
+        timestamp: true
+      }));
       
       // Only send once per guild
       break;
@@ -334,16 +341,23 @@ client.kazagumo.on('playerStart', async (player, track) => {
 
   cleanupProgressUpdater(player);
   await deleteNowPlayingEmbed(player);
-  const payload = buildNowPlayingMessage(player, track, t);
+  const { payload, cardBuffer } = await buildNowPlayingMessage(player, track, t);
   try {
     const message = await channel.send(payload);
     player.data.set('nowPlayingMessage', message);
     startProgressUpdater(player);
+
+    // Delete the searching/stage interaction reply now that Now Playing is visible
+    const searchingInteraction = player.data.get('searchingInteraction');
+    if (searchingInteraction) {
+      player.data.delete('searchingInteraction');
+      searchingInteraction.deleteReply().catch(() => {});
+    }
   } catch (error) {
     log(`Failed to send now playing embed: ${error.message}`);
   }
 
-  await sendMusicStartLog(player, track);
+  await sendMusicStartLog(player, track, cardBuffer);
 });
 
 client.kazagumo.on('playerEnd', async player => {
@@ -362,15 +376,12 @@ client.kazagumo.on('playerEmpty', async player => {
     const channel = client.channels.cache.get(player.textId);
     
     if (channel) {
-      const embed = new EmbedBuilder()
-        .setTitle(t('logs.player.queue_finished.title'));
-      
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setLabel(t('logs.player.queue_finished.website')).setURL('https://kennyy.com.br').setStyle(ButtonStyle.Link),
         new ButtonBuilder().setLabel(t('logs.player.queue_finished.support')).setURL('https://discord.gg/3sTbFm8WRt').setStyle(ButtonStyle.Link)
       );
       
-      await channel.send({ embeds: [embed], components: [row] });
+      await channel.send(v2Reply({ title: t('logs.player.queue_finished.title'), components: [row] }));
     }
   } catch (error) {
     console.error('Erro ao enviar embed de fila finalizada:', error);
@@ -449,40 +460,20 @@ client.on(Events.GuildCreate, async guild => {
     }
 
     const t = await getTranslator(client, guild.id);
-    const embed = new EmbedBuilder()
-      .setTitle(t('logs.guild_join.title', { default: '📥 Entrei em um novo servidor!' }))
-      .setColor(0x00ff00)
-      .setTimestamp();
-
     const unknown = t('logs.common.unknown', { default: 'Desconhecido' });
-    
-    embed.addFields(
-      { name: t('logs.guild_join.fields.name', { default: 'Nome do Servidor' }), value: guild.name, inline: false },
-      { name: t('logs.guild_join.fields.id', { default: 'ID do Servidor' }), value: `\`${guild.id}\``, inline: true }
-    );
+    const fields = [
+      { name: t('logs.guild_join.fields.name', { default: 'Nome do Servidor' }), value: guild.name },
+      { name: t('logs.guild_join.fields.id', { default: 'ID do Servidor' }), value: `\`${guild.id}\`` }
+    ];
 
     if (guild.memberCount) {
-      embed.addFields({
-        name: t('logs.guild_join.fields.members', { default: 'Membros' }),
-        value: t('logs.common.member_count', { default: '{count} membros', count: guild.memberCount.toLocaleString() }),
-        inline: true
-      });
+      fields.push({ name: t('logs.guild_join.fields.members', { default: 'Membros' }), value: t('logs.common.member_count', { default: '{count} membros', count: guild.memberCount.toLocaleString() }) });
     }
-
     if (guild.ownerId) {
-      embed.addFields({
-        name: t('logs.guild_join.fields.owner', { default: 'Dono' }),
-        value: `<@${guild.ownerId}> (\`${guild.ownerId}\`)`,
-        inline: true
-      });
+      fields.push({ name: t('logs.guild_join.fields.owner', { default: 'Dono' }), value: `<@${guild.ownerId}> (\`${guild.ownerId}\`)` });
     }
-
     if (guild.createdAt) {
-      embed.addFields({
-        name: t('logs.guild_join.fields.created_at', { default: 'Criado em' }),
-        value: guild.createdAt.toLocaleDateString('pt-BR'),
-        inline: true
-      });
+      fields.push({ name: t('logs.guild_join.fields.created_at', { default: 'Criado em' }), value: guild.createdAt.toLocaleDateString('pt-BR') });
     }
 
     const verificationLevels = {
@@ -493,42 +484,26 @@ client.on(Events.GuildCreate, async guild => {
       4: 'logs.common.verification.highest'
     };
     const verificationKey = verificationLevels[guild.verificationLevel] || 'logs.common.unknown';
-    
-    embed.addFields({
-      name: t('logs.guild_join.fields.verification', { default: 'Verificação' }),
-      value: t(verificationKey, { default: unknown }),
-      inline: true
-    });
+    fields.push({ name: t('logs.guild_join.fields.verification', { default: 'Verificação' }), value: t(verificationKey, { default: unknown }) });
 
     const boostCount = guild.premiumSubscriptionCount || 0;
     const boostKey = boostCount ? 'logs.common.boost.with_count' : 'logs.common.boost.basic';
-    embed.addFields({
+    fields.push({
       name: t('logs.guild_join.fields.boost', { default: 'Boost' }),
-      value: t(boostKey, {
-        default: boostCount ? `Nível ${guild.premiumTier} (${boostCount} boosts)` : `Nível ${guild.premiumTier}`,
-        tier: guild.premiumTier,
-        count: boostCount
-      }),
-      inline: true
+      value: t(boostKey, { default: boostCount ? `Nível ${guild.premiumTier} (${boostCount} boosts)` : `Nível ${guild.premiumTier}`, tier: guild.premiumTier, count: boostCount })
     });
 
-    embed.addFields({
+    fields.push({
       name: t('logs.guild_join.fields.total', { default: 'Total de Servidores' }),
-      value: t('logs.guild_join.summary', {
-        default: '🌐 Agora estou em **{total}** servidores!',
-        total: client.guilds.cache.size
-      }),
-      inline: false
+      value: t('logs.guild_join.summary', { default: '🌐 Agora estou em **{total}** servidores!', total: client.guilds.cache.size })
     });
 
-    if (guild.iconURL()) {
-      embed.setThumbnail(guild.iconURL({ size: 256 }));
-    }
-    if (guild.bannerURL()) {
-      embed.setImage(guild.bannerURL({ size: 1024 }));
-    }
-
-    await logChannel.send({ embeds: [embed] });
+    await logChannel.send(v2Reply({
+      color: 0xF53F5F,
+      title: t('logs.guild_join.title', { default: '📥 Entrei em um novo servidor!' }),
+      fields,
+      timestamp: true
+    }));
   } catch (error) {
     log(`Failed to send guild join log: ${error.message}`);
   }
@@ -561,40 +536,20 @@ client.on(Events.GuildDelete, async guild => {
     }
 
     const t = await getTranslator(client, guild.id);
-    const embed = new EmbedBuilder()
-      .setTitle(t('logs.guild_remove.title', { default: '📤 Saí de um servidor' }))
-      .setColor(0xff0000)
-      .setTimestamp();
-
     const unknown = t('logs.common.unknown', { default: 'Desconhecido' });
-    
-    embed.addFields(
-      { name: t('logs.guild_remove.fields.name', { default: 'Nome do Servidor' }), value: guild.name, inline: false },
-      { name: t('logs.guild_remove.fields.id', { default: 'ID do Servidor' }), value: `\`${guild.id}\``, inline: true }
-    );
+    const fields = [
+      { name: t('logs.guild_remove.fields.name', { default: 'Nome do Servidor' }), value: guild.name },
+      { name: t('logs.guild_remove.fields.id', { default: 'ID do Servidor' }), value: `\`${guild.id}\`` }
+    ];
 
     if (guild.memberCount) {
-      embed.addFields({
-        name: t('logs.guild_remove.fields.members', { default: 'Membros' }),
-        value: t('logs.common.member_count', { default: '{count} membros', count: guild.memberCount.toLocaleString() }),
-        inline: true
-      });
+      fields.push({ name: t('logs.guild_remove.fields.members', { default: 'Membros' }), value: t('logs.common.member_count', { default: '{count} membros', count: guild.memberCount.toLocaleString() }) });
     }
-
     if (guild.ownerId) {
-      embed.addFields({
-        name: t('logs.guild_remove.fields.owner', { default: 'Dono' }),
-        value: `<@${guild.ownerId}> (\`${guild.ownerId}\`)`,
-        inline: true
-      });
+      fields.push({ name: t('logs.guild_remove.fields.owner', { default: 'Dono' }), value: `<@${guild.ownerId}> (\`${guild.ownerId}\`)` });
     }
-
     if (guild.createdAt) {
-      embed.addFields({
-        name: t('logs.guild_remove.fields.created_at', { default: 'Criado em' }),
-        value: guild.createdAt.toLocaleDateString('pt-BR'),
-        inline: true
-      });
+      fields.push({ name: t('logs.guild_remove.fields.created_at', { default: 'Criado em' }), value: guild.createdAt.toLocaleDateString('pt-BR') });
     }
 
     const verificationLevels = {
@@ -605,42 +560,26 @@ client.on(Events.GuildDelete, async guild => {
       4: 'logs.common.verification.highest'
     };
     const verificationKey = verificationLevels[guild.verificationLevel] || 'logs.common.unknown';
-    
-    embed.addFields({
-      name: t('logs.guild_remove.fields.verification', { default: 'Verificação' }),
-      value: t(verificationKey, { default: unknown }),
-      inline: true
-    });
+    fields.push({ name: t('logs.guild_remove.fields.verification', { default: 'Verificação' }), value: t(verificationKey, { default: unknown }) });
 
     const boostCount = guild.premiumSubscriptionCount || 0;
     const boostKey = boostCount ? 'logs.common.boost.with_count' : 'logs.common.boost.basic';
-    embed.addFields({
+    fields.push({
       name: t('logs.guild_remove.fields.boost', { default: 'Boost' }),
-      value: t(boostKey, {
-        default: boostCount ? `Nível ${guild.premiumTier} (${boostCount} boosts)` : `Nível ${guild.premiumTier}`,
-        tier: guild.premiumTier,
-        count: boostCount
-      }),
-      inline: true
+      value: t(boostKey, { default: boostCount ? `Nível ${guild.premiumTier} (${boostCount} boosts)` : `Nível ${guild.premiumTier}`, tier: guild.premiumTier, count: boostCount })
     });
 
-    embed.addFields({
+    fields.push({
       name: t('logs.guild_remove.fields.total', { default: 'Total de Servidores' }),
-      value: t('logs.guild_remove.summary', {
-        default: '🌐 Agora estou em **{total}** servidores',
-        total: client.guilds.cache.size
-      }),
-      inline: false
+      value: t('logs.guild_remove.summary', { default: '🌐 Agora estou em **{total}** servidores', total: client.guilds.cache.size })
     });
 
-    if (guild.iconURL()) {
-      embed.setThumbnail(guild.iconURL({ size: 256 }));
-    }
-    if (guild.bannerURL()) {
-      embed.setImage(guild.bannerURL({ size: 1024 }));
-    }
-
-    await logChannel.send({ embeds: [embed] });
+    await logChannel.send(v2Reply({
+      color: 0xF53F5F,
+      title: t('logs.guild_remove.title', { default: '📤 Saí de um servidor' }),
+      fields,
+      timestamp: true
+    }));
   } catch (error) {
     log(`Failed to send guild leave log: ${error.message}`);
   }
@@ -671,20 +610,8 @@ client.on(Events.InteractionCreate, async interaction => {
       const isOwner = ownerIds.includes(String(interaction.user.id));
       if (!isOwner) {
         const lock = client._commandLock;
-        const embed = new EmbedBuilder()
-          .setColor(0xed4245)
-          .setTitle(lock.title || '🔒')
-          .setDescription(lock.description || '...')
-          .setTimestamp();
-
-        const replyPayload = { embeds: [embed], ephemeral: true };
-
-        if (lock.buttons?.length) {
-          const row = new ActionRowBuilder().addComponents(...lock.buttons);
-          replyPayload.components = [row];
-        }
-
-        return interaction.reply(replyPayload);
+        const lockPayload = v2Reply({ color: 0xed4245, title: lock.title || '🔒', description: lock.description || '...', timestamp: true, components: lock.buttons?.length ? [new ActionRowBuilder().addComponents(...lock.buttons)] : undefined });
+        return interaction.reply({ ...lockPayload, ephemeral: true });
       }
     }
 
@@ -745,13 +672,7 @@ client.on(Events.InteractionCreate, async interaction => {
       client._commandLock = { enabled: true, title: lockTitle, description: lockDescription, buttons };
       log(`[Lock] Enabled. Title: ${lockTitle}, Buttons: ${buttons.length}`);
 
-      const embed = new EmbedBuilder()
-        .setColor(0xed4245)
-        .setTitle(t('commands.admin.lock.enabled_title'))
-        .setDescription(t('commands.admin.lock.enabled_description'))
-        .setTimestamp();
-
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await interaction.reply({ ...v2Reply({ color: 0xF53F5F, title: t('commands.admin.lock.enabled_title'), description: t('commands.admin.lock.enabled_description'), timestamp: true }), ephemeral: true });
     } catch (error) {
       log(`Lock modal error: ${error.message}`);
       try {
@@ -928,12 +849,7 @@ async function handlePlaybackButton(interaction, providedT) {
     },
     'music-queue': async () => {
       const queueDescription = buildQueueDescription(player, t);
-      const embed = new EmbedBuilder()
-        .setColor(0x5865f2)
-        .setTitle(t('queue.title'))
-        .setDescription(queueDescription)
-        .setTimestamp();
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await interaction.reply({ ...v2Reply({ color: 0xF53F5F, title: t('queue.title'), description: queueDescription, timestamp: true }), ephemeral: true });
     },
     'music-lyrics': async () => {
       await handleLyricsButton(interaction, player, t);
@@ -972,11 +888,7 @@ async function handleResumeQueueButton(interaction, t) {
 
   // Check cache exists
   if (!client.queueCache?.hasCache(guildId)) {
-    const noCache = new EmbedBuilder()
-      .setColor(0xff6b6b)
-      .setTitle(`<a:panic:1451081526522417252> ${t('commands.resumequeue.no_cache_title')}`)
-      .setDescription(t('commands.resumequeue.no_cache_description'));
-    return interaction.reply({ embeds: [noCache], ephemeral: true });
+    return interaction.reply({ ...v2Reply({ color: 0xff6b6b, title: `<a:panic:1451081526522417252> ${t('commands.resumequeue.no_cache_title')}`, description: t('commands.resumequeue.no_cache_description') }), ephemeral: true });
   }
 
   // Disable the button after click
@@ -997,31 +909,19 @@ async function handleResumeQueueButton(interaction, t) {
 
   const cachedTracks = client.queueCache.getQueue(guildId);
   if (!cachedTracks?.length) {
-    const noCache = new EmbedBuilder()
-      .setColor(0xff6b6b)
-      .setTitle(`<a:panic:1451081526522417252> ${t('commands.resumequeue.no_cache_title')}`)
-      .setDescription(t('commands.resumequeue.no_cache_description'));
-    return interaction.followUp({ embeds: [noCache], ephemeral: true });
+    return interaction.followUp({ ...v2Reply({ color: 0xff6b6b, title: `<a:panic:1451081526522417252> ${t('commands.resumequeue.no_cache_title')}`, description: t('commands.resumequeue.no_cache_description') }), ephemeral: true });
   }
 
   // Check bot permissions
   const botMember = interaction.guild.members.me;
   if (!voiceChannel.permissionsFor(botMember).has(['Connect', 'Speak', 'ViewChannel'])) {
-    const permEmbed = new EmbedBuilder()
-      .setColor(0xFF0000)
-      .setTitle(`<a:dance_teto:1451252227133018374> ${t('common.no_voice_permissions_title') || 'Missing Permissions'}`)
-      .setDescription(t('common.no_voice_permissions'));
-    return interaction.followUp({ embeds: [permEmbed], ephemeral: true });
+    return interaction.followUp({ ...v2Reply({ color: 0xFF0000, title: `<a:dance_teto:1451252227133018374> ${t('common.no_voice_permissions_title') || 'Missing Permissions'}`, description: t('common.no_voice_permissions') }), ephemeral: true });
   }
 
   // Check for available nodes
   const hasAvailableNode = Array.from(client.kazagumo.shoukaku.nodes.values()).some(n => n.state === 1);
   if (!hasAvailableNode) {
-    const noNodeEmbed = new EmbedBuilder()
-      .setColor(0xff6b6b)
-      .setTitle(`${process.env.EMOJI_CRY || '<:cry:1453534083983474867>'} ${t('errors.lavalink_error_title')}`)
-      .setDescription(t('errors.lavalink_error_description'));
-    return interaction.followUp({ embeds: [noNodeEmbed], ephemeral: true });
+    return interaction.followUp({ ...v2Reply({ color: 0xff6b6b, title: `${process.env.EMOJI_CRY || '<:cry:1453534083983474867>'} ${t('errors.lavalink_error_title')}`, description: t('errors.lavalink_error_description') }), ephemeral: true });
   }
 
   let player = client.kazagumo.players.get(guildId);
@@ -1071,10 +971,7 @@ async function handleResumeQueueButton(interaction, t) {
   }
 
   // Show loading
-  const loadingEmbed = new EmbedBuilder()
-    .setColor(0x5284ff)
-    .setDescription(`# <a:unadance:1450689460307230760> ${t('commands.resumequeue.loading') || 'Restoring queue...'}`);
-  await interaction.followUp({ embeds: [loadingEmbed] });
+  await interaction.followUp(v2Reply({ color: 0xF53F5F, description: `# <a:unadance:1450689460307230760> ${t('commands.resumequeue.loading') || 'Restoring queue...'}` }));
 
   // Resolve tracks
   let addedCount = 0;
@@ -1117,11 +1014,6 @@ async function handleResumeQueueButton(interaction, t) {
   }
 
   if (addedCount === 0) {
-    const failedEmbed = new EmbedBuilder()
-      .setColor(0xff6b6b)
-      .setTitle(`<a:panic:1451081526522417252> ${t('commands.resumequeue.failed_title')}`)
-      .setDescription(t('commands.resumequeue.failed_description'));
-
     if (!hadActivePlayer && player) {
       try {
         await player.destroy();
@@ -1129,7 +1021,7 @@ async function handleResumeQueueButton(interaction, t) {
         client.kazagumo.players.delete(guildId);
       }
     }
-    return interaction.editReply({ embeds: [failedEmbed] });
+    return interaction.editReply(v2Reply({ color: 0xff6b6b, title: `<a:panic:1451081526522417252> ${t('commands.resumequeue.failed_title')}`, description: t('commands.resumequeue.failed_description') }));
   }
 
   // Clear cache after success
@@ -1141,27 +1033,16 @@ async function handleResumeQueueButton(interaction, t) {
   }
 
   // Success embed
-  const embed = new EmbedBuilder()
-    .setColor(0x57f287)
-    .setTitle(`<a:dance_teto:1451252227133018374> ${t('commands.resumequeue.success_title')}`)
-    .setDescription(t('commands.resumequeue.success_description', { count: addedCount }))
-    .addFields(
-      {
-        name: t('commands.resumequeue.first_track'),
-        value: firstTrack?.title ? `**${firstTrack.title}**` : t('common.unknown'),
-        inline: true
-      },
-      {
-        name: t('commands.resumequeue.queue_size'),
-        value: `${player.queue.length}`,
-        inline: true
-      }
-    )
-    .setTimestamp();
-
-  if (firstTrack?.thumbnail || firstTrack?.artworkUrl) {
-    embed.setThumbnail(firstTrack.thumbnail || firstTrack.artworkUrl);
-  }
+  const successPayload = v2Reply({
+    color: 0xF53F5F,
+    title: `<a:dance_teto:1451252227133018374> ${t('commands.resumequeue.success_title')}`,
+    description: t('commands.resumequeue.success_description', { count: addedCount }),
+    fields: [
+      { name: t('commands.resumequeue.first_track'), value: firstTrack?.title ? `**${firstTrack.title}**` : t('common.unknown'), inline: true },
+      { name: t('commands.resumequeue.queue_size'), value: `${player.queue.length}`, inline: true }
+    ],
+    timestamp: true
+  });
 
   // Delete loading message and send success
   try {
@@ -1169,89 +1050,286 @@ async function handleResumeQueueButton(interaction, t) {
     if (loadingMsg) await loadingMsg.delete();
   } catch {}
   
-  return interaction.channel.send({ embeds: [embed] });
+  return interaction.channel.send(successPayload);
 }
 
-function buildNowPlayingMessage(player, track, t) {
+// ========== Now Playing Card Generator ==========
+const BACKGROUND_PATH = path.join(__dirname, 'public', 'image', 'background.png');
+const FONT_PATH = path.join(__dirname, 'public', 'fonts', 'K2D', 'K2D-Bold.ttf');
+const FONT_CJK_BOLD = path.join(__dirname, 'public', 'fonts', 'NotoSansJP', 'NotoSansCJKjp-Bold.otf');
+const FONT_CJK_REGULAR = path.join(__dirname, 'public', 'fonts', 'NotoSansJP', 'NotoSansCJKjp-Regular.otf');
+
+// Try to register fonts
+const { GlobalFonts } = require('@napi-rs/canvas');
+try {
+  if (fs.existsSync(FONT_PATH)) {
+    GlobalFonts.registerFromPath(FONT_PATH, 'K2D');
+  }
+  if (fs.existsSync(FONT_CJK_BOLD)) {
+    GlobalFonts.registerFromPath(FONT_CJK_BOLD, 'Noto Sans CJK JP');
+  }
+  if (fs.existsSync(FONT_CJK_REGULAR)) {
+    GlobalFonts.registerFromPath(FONT_CJK_REGULAR, 'Noto Sans CJK JP');
+  }
+} catch (e) {
+  // Font not available, will use fallback
+}
+
+// Source icon URLs (Discord CDN)
+const SOURCE_ICONS = {
+  youtube: 'https://cdn.discordapp.com/emojis/1483286021297672315.webp',
+  ytmusic: 'https://cdn.discordapp.com/emojis/1446620983267037395.webp',
+  spotify: 'https://cdn.discordapp.com/emojis/1446621523631931423.webp',
+  deezer: 'https://cdn.discordapp.com/emojis/1483286023604670674.webp',
+  applemusic: 'https://cdn.discordapp.com/emojis/1483286022401036408.webp',
+  soundcloud: 'https://cdn.discordapp.com/emojis/1483286020005826660.webp',
+  twitch: 'https://cdn.discordapp.com/emojis/1483286084514484286.webp'
+};
+
+// Positions based on your Figma template (2x scale: 3120x784)
+// Cover: 60px vertical margin at 1560 scale = 120px at 3120, size ~272 at 1560 = 544 at 3120
+const CARD_POSITIONS = {
+  thumb: { x: 120, y: 120, size: 544 },
+  title: { x: 720, y: 120 },
+  artist: { x: 720, y: 300 },
+  duration: { x: 720, y: 0 },  // y calculated dynamically (bottom-aligned with thumb)
+  sourceIcon: { x: 2804, y: 120, size: 120 }
+};
+
+// Helper to extract string from track property (handles nested info object)
+function getTrackString(track, prop) {
+  if (!track) return 'Unknown';
+  
+  // Direct property access
+  let value = track[prop];
+  
+  // If value is an object with a specific structure, extract the string
+  if (value && typeof value === 'object') {
+    // Try common nested properties
+    if (typeof value.name === 'string') return value.name;
+    if (typeof value.title === 'string') return value.title;
+    if (typeof value.text === 'string') return value.text;
+    // Try info.property
+    if (track.info && typeof track.info[prop] === 'string') {
+      return track.info[prop];
+    }
+    // Last resort - don't use toString on objects
+    return 'Unknown';
+  }
+  
+  // If undefined, try info.property
+  if (value === undefined || value === null) {
+    value = track.info?.[prop];
+  }
+  
+  // Return as string or Unknown
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number') return String(value);
+  return 'Unknown';
+}
+
+// Cached background image
+let cachedBackground = null;
+
+async function generateNowPlayingCard(track, player) {
+  // Load and cache background
+  if (!cachedBackground) {
+    try {
+      cachedBackground = await loadImage(BACKGROUND_PATH);
+    } catch (e) {
+      log(`[NowPlaying] Failed to load background: ${e.message}`);
+    }
+  }
+
+  // Use background dimensions or fallback
+  const width = cachedBackground?.width ?? 3120;
+  const height = cachedBackground?.height ?? 784;
+
+  const canvas = createCanvas(width, height);
+  const ctx = canvas.getContext('2d');
+
+  // === BACKGROUND ===
+  if (cachedBackground) {
+    ctx.drawImage(cachedBackground, 0, 0, width, height);
+  } else {
+    // Fallback gradient
+    const gradient = ctx.createLinearGradient(0, 0, width, 0);
+    gradient.addColorStop(0, '#1a0a1a');
+    gradient.addColorStop(1, '#2d1a2d');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, width, height);
+  }
+
+  // Font family (K2D with CJK fallback)
+  const fontFamily = '"K2D", "Noto Sans CJK JP", "Segoe UI", Arial, sans-serif';
+
+  // === THUMBNAIL ===
+  let thumbnail = track.thumbnail ?? track.artworkUrl ?? null;
+  if (thumbnail) {
+    // Get high quality for YouTube
+    if (track.sourceName === 'youtube') {
+      thumbnail = thumbnail
+        .replace('/default.jpg', '/maxresdefault.jpg')
+        .replace('/mqdefault.jpg', '/maxresdefault.jpg')
+        .replace('/hqdefault.jpg', '/maxresdefault.jpg')
+        .replace('/sddefault.jpg', '/maxresdefault.jpg');
+    }
+    try {
+      const thumbImg = await loadImage(thumbnail);
+      const { x, y, size } = CARD_POSITIONS.thumb;
+      // Rounded corners
+      ctx.save();
+      roundRect(ctx, x, y, size, size, 32);
+      ctx.clip();
+      ctx.drawImage(thumbImg, x, y, size, size);
+      ctx.restore();
+    } catch (e) {
+      // Fallback: draw placeholder
+      const { x, y, size } = CARD_POSITIONS.thumb;
+      ctx.fillStyle = '#333';
+      roundRect(ctx, x, y, size, size, 32);
+      ctx.fill();
+    }
+  }
+
+  const maxTextWidth = CARD_POSITIONS.sourceIcon.x - CARD_POSITIONS.title.x - 100;
+  const thumbTop = CARD_POSITIONS.thumb.y;
+  const thumbBottom = CARD_POSITIONS.thumb.y + CARD_POSITIONS.thumb.size;
+
+  // === TITLE === (aligned with top of thumbnail)
+  ctx.fillStyle = '#FFFFFF';
+  ctx.font = `bold 154px ${fontFamily}`;
+  ctx.textBaseline = 'top';
+  const titleText = String(track.title ?? track.info?.title ?? 'Unknown');
+  const title = truncateCanvasText(ctx, titleText, maxTextWidth);
+  ctx.fillText(title, CARD_POSITIONS.title.x, thumbTop);
+
+  // === ARTIST === (below title)
+  ctx.fillStyle = '#F53F5F';
+  ctx.font = `90px ${fontFamily}`;
+  ctx.textBaseline = 'top';
+  const artistText = String(track.author ?? track.info?.author ?? 'Unknown');
+  const artist = truncateCanvasText(ctx, artistText, maxTextWidth);
+  ctx.fillText(artist, CARD_POSITIONS.artist.x, thumbTop + 170);
+
+  // === WEBSITE === (aligned with bottom of thumbnail, where duration used to be)
+  ctx.fillStyle = '#FFFFFF';
+  ctx.font = `bold 72px ${fontFamily}`;
+  ctx.textBaseline = 'bottom';
+  ctx.fillText('www.kennyy.com.br', CARD_POSITIONS.duration.x, thumbBottom);
+
+  // === SOURCE ICON (tinted with #F53F5F) ===
+  const sourceKey = detectTrackSource(track);
+  const iconUrl = SOURCE_ICONS[sourceKey];
+  if (iconUrl) {
+    try {
+      const iconImg = await loadImage(iconUrl);
+      const { x, y, size } = CARD_POSITIONS.sourceIcon;
+      // Draw icon to a temporary canvas and tint it
+      const iconCanvas = createCanvas(size, size);
+      const iconCtx = iconCanvas.getContext('2d');
+      iconCtx.drawImage(iconImg, 0, 0, size, size);
+      // Apply tint: draw color on top using source-atop to only color non-transparent pixels
+      iconCtx.globalCompositeOperation = 'source-atop';
+      iconCtx.fillStyle = '#F53F5F';
+      iconCtx.fillRect(0, 0, size, size);
+      // Draw tinted icon onto main canvas
+      ctx.drawImage(iconCanvas, x, y, size, size);
+    } catch (e) {
+      // Icon failed to load, skip
+    }
+  }
+
+  return canvas.toBuffer('image/png');
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function truncateCanvasText(ctx, text, maxWidth) {
+  if (!text) return '';
+  let truncated = text;
+  while (ctx.measureText(truncated).width > maxWidth && truncated.length > 0) {
+    truncated = truncated.slice(0, -1);
+  }
+  if (truncated.length < text.length) {
+    truncated = truncated.slice(0, -3) + '...';
+  }
+  return truncated;
+}
+
+async function buildNowPlayingMessage(player, track, t) {
   if (!track) {
     return {
-      content: t('now_playing.no_track'),
-      embeds: [],
-      components: []
+      payload: {
+        content: t('now_playing.no_track'),
+        embeds: [],
+        components: [],
+        files: []
+      },
+      cardBuffer: null
     };
   }
 
-  const baseTitle = stripLeadingIcons(t('common.now_playing'));
-  const icon = trackSourceIcon(track);
-  const title = baseTitle ? `${icon} ${baseTitle}` : icon;
-  const description = `**${track.title ?? '-'}**`;
   const durationMs = Number.isFinite(track.duration) ? track.duration : track.length ?? 0;
-  
-  // Get high quality thumbnail for YouTube videos
-  let thumbnail = track.thumbnail ?? track.artworkUrl ?? null;
-  if (thumbnail && track.sourceName === 'youtube') {
-    // Replace default/medium quality with maxres (maximum quality)
-    thumbnail = thumbnail
-      .replace('/default.jpg', '/maxresdefault.jpg')
-      .replace('/mqdefault.jpg', '/maxresdefault.jpg')
-      .replace('/hqdefault.jpg', '/maxresdefault.jpg')
-      .replace('/sddefault.jpg', '/maxresdefault.jpg');
-  }
-  
-  const embed = new EmbedBuilder()
-    .setColor(trackSourceColor(track))
-    .setTitle(title?.trim?.() ? title.trim() : icon ?? t('common.now_playing'))
-    .setDescription(description)
-    .setThumbnail(thumbnail);
 
-  embed.addFields(
-    {
-      name: t('common.artist'),
-      value: track.author ?? t('common.unknown'),
-      inline: true
-    },
-    {
-      name: t('common.duration'),
-      value: formatDuration(durationMs),
-      inline: true
-    },
-    {
-      name: t('common.volume'),
-      value: `${player.volume ?? 100}%`,
-      inline: true
-    },
-    {
-      name: t('common.queue_label'),
-      value: t('now_playing.queue_value', { count: player.queue.length }),
-      inline: true
-    },
-    {
-      name: t('common.status'),
-      value: player.paused ? t('status.paused') : t('status.playing'),
-      inline: true
-    }
-  );
+  // Generate now playing card image
+  const cardBuffer = await generateNowPlayingCard(track, player);
+  const attachment = new AttachmentBuilder(cardBuffer, { name: 'nowplaying.png' });
 
+  // Build Components V2 layout
+  const container = new ContainerBuilder()
+    .setAccentColor(0xF53F5F);
+
+  // "Now Playing" header with emoji (large heading)
+  const nowPlayingHeader = `# <:nowplaying:1483257820219576414> ${t('common.now_playing')}`;
+  container.addTextDisplayComponents(new TextDisplayBuilder().setContent(nowPlayingHeader));
+
+  // Image gallery with the now playing card
+  const gallery = new MediaGalleryBuilder()
+    .addItems(new MediaGalleryItemBuilder().setURL('attachment://nowplaying.png'));
+  container.addMediaGalleryComponents(gallery);
+
+  // Info text
   const requester = track.requester;
-  if (requester) {
-    const requesterTag = requester?.toString?.() ?? (requester?.id ? `<@${requester.id}>` : t('common.unknown'));
-    embed.addFields({ name: t('common.requested_by'), value: requesterTag, inline: true });
+  const requesterTag = requester?.toString?.() ?? (requester?.id ? `<@${requester.id}>` : t('common.unknown'));
+  const statusText = player.paused ? t('status.paused') : t('status.playing');
+  const progressBar = buildProgressField(player.position, durationMs);
+
+  const infoLines = [
+    `<:volume:1483280753528668280> **${t('common.volume')}:** ${player.volume ?? 100}%`,
+    `<:queue:1483280662663401502> **${t('common.queue_label')}:** ${t('now_playing.queue_value', { count: player.queue.length })}`,
+    `<:status:1483280661270757548> **${t('common.status')}:** ${statusText}`,
+    `<:request:1483280660432162847> **${t('common.requested_by')}:** ${requesterTag}`,
+    '',
+    progressBar
+  ].join('\n');
+
+  container.addTextDisplayComponents(new TextDisplayBuilder().setContent(infoLines));
+
+  // Separator before buttons
+  container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+
+  // Buttons in action rows
+  const buttonRows = buildPlaybackComponents(player, t);
+  for (const row of buttonRows) {
+    container.addActionRowComponents(row);
   }
-
-  embed.addFields({
-    name: t('common.progress'),
-    value: buildProgressField(player.position, durationMs),
-    inline: false
-  });
-
-  const footerBase = t('common.buttons_help');
-  const nodeName = player.shoukaku?.node?.name;
-  const footerText = nodeName ? `${nodeName} • ${footerBase}` : footerBase;
-  embed.setFooter({ text: footerText }).setTimestamp();
 
   return {
-    embeds: [embed],
-    components: buildPlaybackComponents(player, t)
+    payload: {
+      components: [container],
+      files: [attachment],
+      flags: MessageFlags.IsComponentsV2
+    },
+    cardBuffer
   };
 }
 
@@ -1385,7 +1463,7 @@ async function handleFilterButton(interaction, player, t) {
     }
     storeFilterState(player, state);
     await applyFilterState(player, state);
-    await updateFilterMessage(interaction.client, state, t, interaction.message);
+    await updateFilterMessage(interaction.client, state, t, interaction.message, player);
   };
 
   try {
@@ -1413,7 +1491,7 @@ async function handleFilterButton(interaction, player, t) {
         state.bassLevel = level;
         storeFilterState(player, state);
         await applyFilterState(player, state);
-        await updateFilterMessage(interaction.client, state, t, interaction.message);
+        await updateFilterMessage(interaction.client, state, t, interaction.message, player);
         const key = `commands.filter.buttons.bass_boost.activated_${level}`;
         try {
           await interaction.update({ content: t(key), components: [] });
@@ -1449,7 +1527,7 @@ async function handleFilterButton(interaction, player, t) {
         state.bassLevel = null;
         storeFilterState(player, state);
         await applyFilterState(player, state);
-        await updateFilterMessage(interaction.client, state, t, interaction.message);
+        await updateFilterMessage(interaction.client, state, t, interaction.message, player);
         await notify('commands.filter.buttons.reset.success');
         break;
       }
@@ -1469,14 +1547,16 @@ async function handleFilterButton(interaction, player, t) {
 
 async function updateQueueMessage(interaction, player, state, t) {
   const perPage = state.perPage || 10;
-  const embed = buildQueueEmbed(player, state.page, perPage, t);
-  const components = buildQueueComponents(state.page, perPage, player, t);
+  const queuePayload = buildQueueEmbed(player, state.page, perPage, t);
+  const navComponents = buildQueueComponents(state.page, perPage, player, t);
+  // Inject nav buttons into the V2 container
+  queuePayload.components[0].addActionRowComponents(...navComponents);
 
   try {
     if (!interaction.deferred && !interaction.replied) {
       await interaction.deferUpdate();
     }
-    await interaction.message.edit({ embeds: [embed], components });
+    await interaction.message.edit(queuePayload);
     client.queueState.set(interaction.message.id, { ...state });
   } catch (error) {
     log(`Failed to update queue message: ${error.message}`);
@@ -1501,10 +1581,8 @@ function buildQueueComponents(page, perPage, player, t) {
 }
 
 function buildQueueEmbed(player, page, perPage, t) {
-  const embed = new EmbedBuilder().setColor(0x0099ff).setTitle(t('queue.title'));
-
   if (!player) {
-    return embed.setDescription(t('common.no_player'));
+    return v2Reply({ color: 0xF53F5F, title: t('queue.title'), description: t('common.no_player') });
   }
 
   const current = player.queue?.current;
@@ -1512,25 +1590,24 @@ function buildQueueEmbed(player, page, perPage, t) {
   const total = items.length;
 
   if (!current && total === 0) {
-    return embed.setDescription(t('queue.empty'));
+    return v2Reply({ color: 0xF53F5F, title: t('queue.title'), description: t('queue.empty') });
   }
+
+  const fields = [];
+  let descParts = [];
 
   if (current) {
     const durationMs = Number.isFinite(current.duration) ? current.duration : current.length ?? 0;
     const progress = buildProgressField(player.position, durationMs);
     const statusText = player.paused ? t('status.paused') : t('status.playing');
 
-    embed.addFields(
-      { name: t('common.now_playing'), value: `**${current.title ?? t('common.unknown')}**`, inline: false },
-      { name: t('common.artist'), value: current.author ?? t('common.unknown'), inline: true },
-      { name: t('common.duration'), value: formatDuration(durationMs), inline: true },
-      { name: t('common.status'), value: statusText, inline: true },
-      { name: t('common.progress'), value: progress, inline: false }
+    fields.push(
+      { name: t('common.now_playing'), value: `**${current.title ?? t('common.unknown')}**` },
+      { name: t('common.artist'), value: current.author ?? t('common.unknown') },
+      { name: t('common.duration'), value: formatDuration(durationMs) },
+      { name: t('common.status'), value: statusText },
+      { name: t('common.progress'), value: progress }
     );
-
-    if (current.thumbnail || current.artworkUrl) {
-      embed.setThumbnail(current.thumbnail ?? current.artworkUrl);
-    }
   }
 
   const pageCount = Math.max(1, Math.ceil(total / perPage));
@@ -1547,18 +1624,17 @@ function buildQueueEmbed(player, page, perPage, t) {
   });
 
   if (lines.length) {
-    embed.addFields({ name: t('queue.field_next') ?? 'Up Next', value: lines.join('\n'), inline: false });
+    fields.push({ name: t('queue.field_next') ?? 'Up Next', value: lines.join('\n') });
   } else if (total > 0) {
-    embed.addFields({ name: t('queue.field_next') ?? 'Up Next', value: t('queue.empty'), inline: false });
+    fields.push({ name: t('queue.field_next') ?? 'Up Next', value: t('queue.empty') });
   }
 
-  embed.addFields(
-    { name: t('queue.total') ?? 'Total tracks', value: String(total), inline: true },
-    { name: t('queue.page') ?? 'Page', value: `${clampedPage + 1}/${pageCount}`, inline: true }
+  fields.push(
+    { name: t('queue.total') ?? 'Total tracks', value: String(total) },
+    { name: t('queue.page') ?? 'Page', value: `${clampedPage + 1}/${pageCount}` }
   );
 
-  embed.setTimestamp();
-  return embed;
+  return v2Reply({ color: 0xF53F5F, title: t('queue.title'), fields, timestamp: true });
 }
 
 function truncateText(text, limit) {
@@ -1607,39 +1683,29 @@ function storeFilterState(player, state) {
 
 function buildFilterEmbed(player, t) {
   const current = player.queue?.current;
-  const embed = new EmbedBuilder()
-    .setColor(0x0099ff)
-    .setTitle(t('commands.filter.filters.embed.title'))
-    .setDescription(t('commands.filter.filters.embed.description'));
-
-  embed.addFields(
-    {
-      name: t('commands.filter.filters.embed.now_playing_label'),
-      value: t('commands.filter.filters.embed.now_playing_value', {
-        title: current?.title ?? t('common.unknown'),
-        author: current?.author ?? t('common.unknown')
-      }),
-      inline: false
-    },
-    {
-      name: t('commands.filter.filters.embed.available_label'),
-      value: t('commands.filter.filters.embed.available_value'),
-      inline: false
-    },
-    {
-      name: t('commands.filter.filters.embed.howto_label'),
-      value: t('commands.filter.filters.embed.howto_value'),
-      inline: false
-    }
-  );
-
-  const thumb = current?.thumbnail ?? current?.artworkUrl ?? null;
-  if (thumb) {
-    embed.setThumbnail(thumb);
-  }
-
-  embed.setFooter({ text: t('commands.filter.filters.embed.footer') });
-  return embed;
+  return v2Reply({
+    color: 0xF53F5F,
+    title: t('commands.filter.filters.embed.title'),
+    description: t('commands.filter.filters.embed.description'),
+    fields: [
+      {
+        name: t('commands.filter.filters.embed.now_playing_label'),
+        value: t('commands.filter.filters.embed.now_playing_value', {
+          title: current?.title ?? t('common.unknown'),
+          author: current?.author ?? t('common.unknown')
+        })
+      },
+      {
+        name: t('commands.filter.filters.embed.available_label'),
+        value: t('commands.filter.filters.embed.available_value')
+      },
+      {
+        name: t('commands.filter.filters.embed.howto_label'),
+        value: t('commands.filter.filters.embed.howto_value')
+      }
+    ],
+    footer: t('commands.filter.filters.embed.footer')
+  });
 }
 
 function buildFilterComponents(state, t) {
@@ -1739,7 +1805,7 @@ function buildBassLevelComponents(t) {
   ];
 }
 
-async function updateFilterMessage(client, state, t, messageHint = null) {
+async function updateFilterMessage(client, state, t, messageHint = null, player = null) {
   if (!state?.messageId || !state?.channelId) return;
   const components = buildFilterComponents(state, t);
   let targetMessage = null;
@@ -1763,7 +1829,13 @@ async function updateFilterMessage(client, state, t, messageHint = null) {
   if (!targetMessage) return;
 
   try {
-    await targetMessage.edit({ components });
+    if (player) {
+      const filterPayload = buildFilterEmbed(player, t);
+      filterPayload.components[0].addActionRowComponents(...components);
+      await targetMessage.edit(filterPayload);
+    } else {
+      await targetMessage.edit({ components });
+    }
   } catch (error) {
     log(`Failed to update filter message: ${error.message}`);
   }
@@ -1782,11 +1854,15 @@ async function refreshNowPlayingMessage(player) {
   const track = player.queue.current;
   const t = await getTranslator(client, player.guildId);
   if (!track) {
-    await message.edit({ content: t('queue.empty'), embeds: [], components: [] });
+    try {
+      await message.delete();
+    } catch {
+      // If can't delete, just ignore
+    }
     player.data.delete('nowPlayingMessage');
     return;
   }
-  const payload = buildNowPlayingMessage(player, track, t);
+  const { payload } = await buildNowPlayingMessage(player, track, t);
   await message.edit(payload);
 }
 
@@ -1812,23 +1888,16 @@ async function handleLyricsButton(interaction, player, t) {
 
   await interaction.deferReply({ ephemeral: false });
 
-  const searchingEmbed = new EmbedBuilder()
-    .setColor(0x5865f2)
-    .setTitle(t('lyrics.searching_title'))
-    .setDescription(t('lyrics.searching_description', { song: track.title }))
-    .setFooter({ text: t('lyrics.searching_footer') });
+  const searchingPayload = v2Reply({ color: 0xF53F5F, title: t('lyrics.searching_title'), description: t('lyrics.searching_description', { song: track.title }), footer: t('lyrics.searching_footer') });
 
-  const message = await interaction.editReply({ embeds: [searchingEmbed] });
+  const message = await interaction.editReply(searchingPayload);
   player.data.set('lyricsMessage', message);
 
   const lyricsData = await fetchLyrics(track);
 
   if (!lyricsData) {
-    const notFoundEmbed = new EmbedBuilder()
-      .setColor(0xff0000)
-      .setTitle(t('lyrics.not_found_title'))
-      .setDescription(t('lyrics.not_found_description', { query: `${track.title} - ${track.author}` }));
-    return interaction.editReply({ embeds: [notFoundEmbed] });
+    const notFoundPayload = v2Reply({ color: 0xff0000, title: t('lyrics.not_found_title'), description: t('lyrics.not_found_description', { query: `${track.title} - ${track.author}` }) });
+    return interaction.editReply(notFoundPayload);
   }
 
   const timedLines = lyricsData.timedLines || [];
@@ -1837,19 +1906,9 @@ async function handleLyricsButton(interaction, player, t) {
   const snippet = timedLines.length > 0 ? renderTimedSnippet(timedLines, currentIndex) : null;
 
   const description = snippet || lyricsData.lyrics || t('lyrics.empty');
-  const finalEmbed = createLyricsEmbed(track, lyricsData, description, t);
 
-  const components = [
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId('lyrics_stop')
-        .setEmoji('🛑')
-        .setLabel(t('lyrics.stop_button') ?? 'Stop')
-        .setStyle(ButtonStyle.Danger)
-    )
-  ];
-
-  await interaction.editReply({ embeds: [finalEmbed], components });
+  const lyricsReply = createLyricsPayload(track, lyricsData, description, t);
+  await interaction.editReply(lyricsReply);
 
   if (timedLines.length > 0) {
     startLyricsSync(player, message, track, lyricsData, t);
@@ -1868,31 +1927,25 @@ async function handleLyricsStop(interaction, player, t) {
   }
 }
 
-function createLyricsEmbed(track, lyricsData, description, t) {
+function createLyricsPayload(track, lyricsData, description, t) {
   if (description.length > 4000) {
     description = description.substring(0, 3997) + '...';
   }
 
-  const embed = new EmbedBuilder()
-    .setColor(0xffff64)
-    .setTitle(t('lyrics.embed_title', { title: lyricsData.title || track.title }))
-    .setDescription(description)
-    .setAuthor({
-      name: lyricsData.artist || track.author,
-      iconURL: lyricsData.thumbnail || null
-    })
-    .setFooter({
-      text: t('lyrics.embed_footer', {
-        track: track.title,
-        source: lyricsData.source || '?'
-      })
-    });
+  const artistLine = lyricsData.artist || track.author;
+  const title = t('lyrics.embed_title', { title: lyricsData.title || track.title });
+  const footer = t('lyrics.embed_footer', { track: track.title, source: lyricsData.source || '?' });
+  const body = artistLine ? `-# ${artistLine}\n\n${description}` : description;
 
-  if (lyricsData.url) {
-    embed.setURL(lyricsData.url);
-  }
+  const stopRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('lyrics_stop')
+      .setEmoji('🛑')
+      .setLabel(t('lyrics.stop_button') ?? 'Stop')
+      .setStyle(ButtonStyle.Danger)
+  );
 
-  return embed;
+  return v2Reply({ color: 0xF53F5F, title, description: body, footer, components: [stopRow] });
 }
 
 function startLyricsSync(player, message, track, lyricsData, t) {
@@ -1926,9 +1979,9 @@ function startLyricsSync(player, message, track, lyricsData, t) {
       if (currentIndex !== null && currentIndex !== lastIndex) {
         const snippet = renderTimedSnippet(timedLines, currentIndex);
         if (snippet) {
-          const embed = createLyricsEmbed(track, lyricsData, snippet, t);
+          const payload = createLyricsPayload(track, lyricsData, snippet, t);
           try {
-            await message.edit({ embeds: [embed] });
+            await message.edit(payload);
             consecutiveFailures = 0;
           } catch (error) {
             if (error.code === 10008) {
@@ -2036,7 +2089,7 @@ function sendLogChannel(message) {
   channel.send({ content: message }).catch(() => {});
 }
 
-async function sendMusicStartLog(player, track) {
+async function sendMusicStartLog(player, track, cardBuffer) {
   if (!track || !client.logSettingsStore) {
     return;
   }
@@ -2085,24 +2138,35 @@ async function sendMusicStartLog(player, track) {
 
   const requesterLabel = formatRequesterLabel(track.requester);
 
-  const embed = new EmbedBuilder()
-    .setColor(0x3498db)
-    .setTitle('🎵 Music started')
-    .addFields(
-      { name: 'Track', value: trackValue || 'Unknown', inline: false },
-      { name: 'Server', value: guildLabel || 'Unknown', inline: true },
-      { name: 'Voice Channel', value: voiceLabel, inline: true },
-      { name: 'Requested By', value: requesterLabel, inline: true }
-    )
-    .setTimestamp();
-
-  const artwork = track.thumbnail ?? track.artworkUrl ?? track.displayThumbnail ?? null;
-  if (artwork) {
-    embed.setThumbnail(artwork);
-  }
-
   try {
-    await logChannel.send({ embeds: [embed] });
+    // Reuse the card buffer from Now Playing (no duplicate generation)
+    const attachment = cardBuffer
+      ? new AttachmentBuilder(cardBuffer, { name: 'logcard.png' })
+      : null;
+
+    const container = new ContainerBuilder().setAccentColor(0xF53F5F);
+
+    container.addTextDisplayComponents(new TextDisplayBuilder().setContent('# 🎵 Music started'));
+
+    if (attachment) {
+      const gallery = new MediaGalleryBuilder()
+        .addItems(new MediaGalleryItemBuilder().setURL('attachment://logcard.png'));
+      container.addMediaGalleryComponents(gallery);
+    }
+
+    const fieldsText = [
+      `**Track** ${trackValue || 'Unknown'} ​ ​ **Server** ${guildLabel || 'Unknown'}`,
+      `**Voice Channel** ${voiceLabel} ​ ​ **Requested By** ${requesterLabel}`,
+      '',
+      `-# <t:${Math.floor(Date.now() / 1000)}:R>`
+    ].join('\n');
+    container.addTextDisplayComponents(new TextDisplayBuilder().setContent(fieldsText));
+
+    await logChannel.send({
+      components: [container],
+      files: attachment ? [attachment] : [],
+      flags: MessageFlags.IsComponentsV2
+    });
   } catch (error) {
     log(`[Logs] Failed to send music log: ${error.message}`);
   }
@@ -2357,13 +2421,14 @@ async function activateLonelyPause(guild, player) {
       const title = t('player.lonely.pause_title');
       const message = t('player.lonely.pause', { call: voiceChannel.toString() });
       
-      const embed = new EmbedBuilder()
-        .setColor(0xffa500)
-        .setTitle(`${process.env.EMOJI_CATCHILL || '<:catchill:1451442818408124557>'} ${title}`)
-        .setDescription(message)
-        .setTimestamp();
+      const embed = v2Reply({
+        color: 0xF53F5F,
+        title: `${process.env.EMOJI_CATCHILL || '<:catchill:1451442818408124557>'} ${title}`,
+        description: message,
+        timestamp: true
+      });
       
-      const msg = await textChannel.send({ embeds: [embed] });
+      const msg = await textChannel.send(embed);
       // Store message to delete later when user returns or bot disconnects
       player.data.set('lonelyPauseMessage', msg);
     } catch (error) {
@@ -2432,13 +2497,14 @@ async function cancelLonelyPause(guild, player) {
       const title = t('player.lonely.resume_title');
       const message = t('player.lonely.resume', { call: voiceChannel.toString() });
       
-      const embed = new EmbedBuilder()
-        .setColor(0x87ceeb)
-        .setTitle(`${process.env.EMOJI_WINK || '<:7156remwink:1451443034838405330>'} ${title}`)
-        .setDescription(message)
-        .setTimestamp();
+      const resumePayload = v2Reply({
+        color: 0xF53F5F,
+        title: `${process.env.EMOJI_WINK || '<:7156remwink:1451443034838405330>'} ${title}`,
+        description: message,
+        timestamp: true
+      });
       
-      const msg = await textChannel.send({ embeds: [embed] });
+      const msg = await textChannel.send(resumePayload);
       setTimeout(() => msg.delete().catch(() => {}), 10000);
     } catch (error) {
       log(`❌ Falha ao enviar aviso de retomada: ${error.message}`);
@@ -2478,13 +2544,14 @@ async function lonelyDisconnect(guildId) {
       const title = t('player.lonely.disconnect_title');
       const message = t('player.lonely.disconnect', { call: voiceChannel.toString() });
       
-      const embed = new EmbedBuilder()
-        .setColor(0xff0000)
-        .setTitle(`👋 ${title}`)
-        .setDescription(message)
-        .setTimestamp();
+      const disconnectPayload = v2Reply({
+        color: 0xff0000,
+        title: `👋 ${title}`,
+        description: message,
+        timestamp: true
+      });
       
-      await textChannel.send({ embeds: [embed] });
+      await textChannel.send(disconnectPayload);
     } catch (error) {
       log(`❌ Falha ao enviar aviso de desconexão: ${error.message}`);
     }
