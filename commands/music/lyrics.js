@@ -1,6 +1,7 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { getTranslator } = require('../../utils/localeHelpers');
 const { fetchLyrics, findLineIndex, renderTimedSnippet, getApproxPositionMs } = require('../../utils/lyricsManager');
+const { v2Reply } = require('../../utils/embedV2');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -21,22 +22,15 @@ module.exports = {
 
     await interaction.deferReply({ ephemeral: false });
 
-    const searchingEmbed = new EmbedBuilder()
-      .setColor(0x5865f2)
-      .setTitle(t('lyrics.searching_title'))
-      .setDescription(t('lyrics.searching_description', { song: track.title }))
-      .setFooter({ text: t('lyrics.searching_footer') });
+    const searchingPayload = v2Reply({ color: 0xF53F5F, title: t('lyrics.searching_title'), description: t('lyrics.searching_description', { song: track.title }), footer: t('lyrics.searching_footer') });
 
-    const message = await interaction.editReply({ embeds: [searchingEmbed] });
+    const message = await interaction.editReply(searchingPayload);
 
     const lyricsData = await fetchLyrics(track);
 
     if (!lyricsData) {
-      const notFoundEmbed = new EmbedBuilder()
-        .setColor(0xff0000)
-        .setTitle(t('lyrics.not_found_title'))
-        .setDescription(t('lyrics.not_found_description', { query: `${track.title} - ${track.author}` }));
-      return interaction.editReply({ embeds: [notFoundEmbed] });
+      const notFoundPayload = v2Reply({ color: 0xff0000, title: t('lyrics.not_found_title'), description: t('lyrics.not_found_description', { query: `${track.title} - ${track.author}` }) });
+      return interaction.editReply(notFoundPayload);
     }
 
     const timedLines = lyricsData.timedLines || [];
@@ -45,9 +39,18 @@ module.exports = {
     const snippet = timedLines.length > 0 ? renderTimedSnippet(timedLines, currentIndex) : null;
 
     const description = snippet || lyricsData.lyrics || t('lyrics.empty');
-    const finalEmbed = createLyricsEmbed(track, lyricsData, description, t);
+    const finalPayload = createLyricsPayload(track, lyricsData, description, t);
 
-    await interaction.editReply({ embeds: [finalEmbed] });
+    const stopRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('lyrics_stop')
+        .setEmoji('🛑')
+        .setLabel(t('lyrics.stop_button') ?? 'Stop')
+        .setStyle(ButtonStyle.Danger)
+    );
+    finalPayload.components[0].addActionRowComponents(stopRow);
+
+    await interaction.editReply(finalPayload);
 
     if (timedLines.length > 0) {
       startLyricsSync(player, message, track, lyricsData, t);
@@ -55,31 +58,17 @@ module.exports = {
   }
 };
 
-function createLyricsEmbed(track, lyricsData, description, t) {
+function createLyricsPayload(track, lyricsData, description, t) {
   if (description.length > 4000) {
     description = description.substring(0, 3997) + '...';
   }
 
-  const embed = new EmbedBuilder()
-    .setColor(0xffff64)
-    .setTitle(t('lyrics.embed_title', { title: lyricsData.title || track.title }))
-    .setDescription(description)
-    .setAuthor({
-      name: lyricsData.artist || track.author,
-      iconURL: lyricsData.thumbnail || null
-    })
-    .setFooter({
-      text: t('lyrics.embed_footer', {
-        track: track.title,
-        source: lyricsData.source || '?'
-      })
-    });
+  const artistLine = lyricsData.artist || track.author;
+  const title = t('lyrics.embed_title', { title: lyricsData.title || track.title });
+  const footer = t('lyrics.embed_footer', { track: track.title, source: lyricsData.source || '?' });
+  const body = artistLine ? `-# ${artistLine}\n\n${description}` : description;
 
-  if (lyricsData.url) {
-    embed.setURL(lyricsData.url);
-  }
-
-  return embed;
+  return v2Reply({ color: 0xF53F5F, title, description: body, footer });
 }
 
 function startLyricsSync(player, message, track, lyricsData, t) {
@@ -113,9 +102,9 @@ function startLyricsSync(player, message, track, lyricsData, t) {
       if (currentIndex !== null && currentIndex !== lastIndex) {
         const snippet = renderTimedSnippet(timedLines, currentIndex);
         if (snippet) {
-          const embed = createLyricsEmbed(track, lyricsData, snippet, t);
+          const payload = createLyricsPayload(track, lyricsData, snippet, t);
           try {
-            await message.edit({ embeds: [embed] });
+            await message.edit(payload);
             consecutiveFailures = 0;
           } catch (error) {
             if (error.code === 10008) {

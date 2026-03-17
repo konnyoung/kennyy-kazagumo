@@ -1,7 +1,7 @@
 {
   "name": "kenny-music-bot",
   "version": "1.0.0",
-  "description": "Discord music bot with Erela.js and multi-node Lavalink failover",
+  "description": "Kazagumo discord music bot",
   "main": "index.js",
   "type": "commonjs",
   "scripts": {
@@ -11,6 +11,7 @@
     "node": ">=18.17.0"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^0.1.97",
     "discord.js": "^14.15.3",
     "dotenv": "^16.4.5",
     "kazagumo": "^3.4.3",

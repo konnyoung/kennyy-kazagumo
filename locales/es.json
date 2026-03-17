@@ -32,7 +32,7 @@
     "lavalink_error_title": "Ups, tuve un problemita de conexión interna.",
     "lavalink_error_description": "¡Nuestros servidores están inestables en este momento! Por favor no elimines el bot del servidor, es temporal y pronto se solucionará!",
     "node_down_title": "Conexión perdida",
-    "node_down_description": "El servidor que estaba reproduciendo se cayó. Para reducir costos y mantener el bot vivo usamos servidores de terceros que pueden sufrir inestabilidades momentáneas (no los controlamos, lamentablemente).\n\nPero como soy un bot buenito, guardé tu cola :3",
+    "node_down_description": "El servidor que estaba reproduciendo se cayó.\n\nPero como soy un bot buenito, guardé tu cola :3",
     "node_down_recover_button": "Recuperar Cola"
   },
   "queue": {
@@ -49,8 +49,8 @@
     "footer_hint": "Usa los botones de abajo para controlar la reproducción"
   },
   "status": {
-    "playing": "🔄 Reproduciendo",
-    "paused": "⏸️ Pausado"
+    "playing": "Reproduciendo",
+    "paused": "Pausado"
   },
   "player": {
     "lonely": {
@@ -73,6 +73,8 @@
       "option_query": "Enlace o término de búsqueda",
       "already_other_channel": "Ya estoy reproduciendo en otro canal de voz.",
       "searching": "Buscando...",
+      "loading_track": "Cargando pista...",
+      "starting": "Iniciando reproducción...",
       "no_results": "No pude encontrar ningún resultado para esa búsqueda.",
       "no_results_title": "Nada encontrado",
       "no_results_description": "No pude encontrar resultados para tu búsqueda.\n\nIntenta de nuevo con palabras clave diferentes o verifica si el enlace es correcto.",

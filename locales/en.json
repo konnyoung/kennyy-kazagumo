@@ -32,7 +32,7 @@
     "lavalink_error_title": "Oops, I had a little connection issue.",
     "lavalink_error_description": "Our servers are unstable at the moment! Please don't remove the bot from the server, it's temporary and will be fixed soon!",
     "node_down_title": "Connection Lost",
-    "node_down_description": "The server that was playing your music went offline. To reduce costs and keep the bot alive, we use third-party servers that may have brief instability (and we don't control them, unfortunately).\n\nBut since I'm a nice bot, I saved your queue :3",
+    "node_down_description": "The server that was playing your music went offline.\n\nBut since I'm a nice bot, I saved your queue :3",
     "node_down_recover_button": "Recover Queue"
   },
   "queue": {
@@ -49,8 +49,8 @@
     "footer_hint": "Use the buttons below to control playback"
   },
   "status": {
-    "playing": "🔄 Playing",
-    "paused": "⏸️ Paused"
+    "playing": "Playing",
+    "paused": "Paused"
   },
   "player": {
     "lonely": {
@@ -73,6 +73,8 @@
       "option_query": "Link or search term",
       "already_other_channel": "I'm already playing in another voice channel.",
       "searching": "Searching...",
+      "loading_track": "Loading track...",
+      "starting": "Starting playback...",
       "no_results": "I couldn't find any results for that search.",
       "no_results_title": "Nothing found",
       "no_results_description": "I couldn't find any results for your search.\n\nTry again with different keywords or check if the link is correct.",

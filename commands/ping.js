@@ -1,7 +1,8 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const net = require('node:net');
 const { performance } = require('node:perf_hooks');
 const { getTranslator } = require('../utils/localeHelpers');
+const { v2Reply } = require('../utils/embedV2');
 
 const MAX_NODES = 10;
 const LAVALINK_ENDPOINTS = ['/v4/info', '/version'];
@@ -19,52 +20,35 @@ module.exports = {
 
     const [lavalinkResults, cloudflareMs] = await Promise.all([lavalinkPromise, cloudflarePromise]);
 
-    const embed = new EmbedBuilder()
-      .setTitle(t('commands.ping.embed.title'))
-      .setColor(0x5865f2)
-      .addFields({
+    const fields = [
+      {
         name: t('commands.ping.fields.discord.name'),
-        value: t('commands.ping.fields.discord.value', {
-          emoji: statusEmoji(discordMs),
-          latency: discordMs
-        }),
-        inline: false
-      });
+        value: t('commands.ping.fields.discord.value', { emoji: statusEmoji(discordMs), latency: discordMs })
+      }
+    ];
 
     if (lavalinkResults.length) {
       for (const result of lavalinkResults) {
         const { config, latency, endpoint } = result;
         const displayName = config.name || config.identifier || 'node';
-        embed.addFields({
+        fields.push({
           name: t('commands.ping.fields.lavalink.display_name', { name: displayName }),
-          value: t('commands.ping.fields.lavalink.value', {
-            emoji: statusEmoji(latency),
-            latency: latency ?? 'N/A',
-            endpoint: endpoint || 'N/A'
-          }),
-          inline: false
+          value: t('commands.ping.fields.lavalink.value', { emoji: statusEmoji(latency), latency: latency ?? 'N/A', endpoint: endpoint || 'N/A' })
         });
       }
     } else {
-      embed.addFields({
+      fields.push({
         name: t('commands.ping.fields.lavalink_empty.name'),
-        value: t('commands.ping.fields.lavalink_empty.value', { emoji: statusEmoji(null) }),
-        inline: false
+        value: t('commands.ping.fields.lavalink_empty.value', { emoji: statusEmoji(null) })
       });
     }
 
-    embed.addFields({
+    fields.push({
       name: t('commands.ping.fields.cloudflare.name'),
-      value: t('commands.ping.fields.cloudflare.value', {
-        emoji: statusEmoji(cloudflareMs),
-        latency: cloudflareMs ?? 'N/A'
-      }),
-      inline: false
+      value: t('commands.ping.fields.cloudflare.value', { emoji: statusEmoji(cloudflareMs), latency: cloudflareMs ?? 'N/A' })
     });
 
-    embed.setFooter({ text: t('commands.ping.embed.footer') });
-
-    await interaction.editReply({ embeds: [embed] });
+    await interaction.editReply(v2Reply({ color: 0xF53F5F, title: t('commands.ping.embed.title'), fields, footer: t('commands.ping.embed.footer') }));
   }
 };
 

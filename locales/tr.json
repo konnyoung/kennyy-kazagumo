@@ -30,7 +30,7 @@
     "lavalink_error_title": "Hay aksi, iç bağlantıda küçük bir sorun yaşadım.",
     "lavalink_error_description": "Sunucularımız şu anda dengesiz! Lütfen botu sunucudan kaldırmayın, bu geçici ve yakında düzelecek!",
     "node_down_title": "Bağlantı kesildi",
-    "node_down_description": "Müziği çalan sunucu çevrimdışına düştü. Maliyetleri azaltmak ve botu hayatta tutmak için üçüncü taraf sunucular kullanıyoruz; bunlar bazen kısa süreli dengesizlik yaşayabiliyor (maalesef kontrol edemiyoruz).\n\nAma iyi bir bot olduğum için kuyruğunu kaydettim :3",
+    "node_down_description": "Müziği çalan sunucu çevrimdışına düştü.\n\nAma iyi bir bot olduğum için kuyruğunu kaydettim :3",
     "node_down_recover_button": "Kuyruğu Kurtar"
   },
   "queue": {
@@ -47,8 +47,8 @@
     "footer_hint": "Oynatmayı kontrol etmek için aşağıdaki düğmeleri kullanın"
   },
   "status": {
-    "playing": "🔄 Çalıyor",
-    "paused": "⏸️ Duraklatıldı"
+    "playing": "Çalıyor",
+    "paused": "Duraklatıldı"
   },
   "player": {
     "lonely": {
@@ -71,6 +71,8 @@
       "option_query": "Bağlantı veya arama terimi",
       "already_other_channel": "Zaten başka bir ses kanalında çalıyorum.",
       "searching": "Aranıyor...",
+      "loading_track": "Parça yükleniyor...",
+      "starting": "Oynatma başlatılıyor...",
       "no_results": "Bu arama için sonuç bulamadım.",
       "no_results_title": "Hiçbir şey bulunamadı",
       "no_results_description": "Aramanız için sonuç bulamadım.\n\nFarklı anahtar kelimelerle tekrar deneyin veya bağlantının doğru olup olmadığını kontrol edin.",

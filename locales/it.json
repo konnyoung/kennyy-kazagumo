@@ -30,7 +30,7 @@
     "lavalink_error_title": "Ops, ho avuto un piccolo problema di connessione interna.",
     "lavalink_error_description": "I nostri server sono instabili al momento! Per favore non rimuovere il bot dal server, è temporaneo e presto si risolverà!",
     "node_down_title": "Connessione persa",
-    "node_down_description": "Il server che stava riproducendo è andato offline. Per ridurre i costi e mantenere il bot attivo usiamo server di terze parti che possono avere instabilità temporanee (che purtroppo non controlliamo).\n\nMa siccome sono un bot carino, ho salvato la tua coda :3",
+    "node_down_description": "Il server che stava riproducendo è andato offline.\n\nMa siccome sono un bot carino, ho salvato la tua coda :3",
     "node_down_recover_button": "Recupera Coda"
   },
   "queue": {
@@ -47,8 +47,8 @@
     "footer_hint": "Usa i pulsanti qui sotto per controllare la riproduzione"
   },
   "status": {
-    "playing": "🔄 In riproduzione",
-    "paused": "⏸️ In pausa"
+    "playing": "In riproduzione",
+    "paused": "In pausa"
   },
   "player": {
     "lonely": {
@@ -71,6 +71,8 @@
       "option_query": "Link o termine di ricerca",
       "already_other_channel": "Sto già riproducendo in un altro canale vocale.",
       "searching": "Ricerca in corso...",
+      "loading_track": "Caricamento traccia...",
+      "starting": "Avvio riproduzione...",
       "no_results": "Non sono riuscito a trovare risultati per quella ricerca.",
       "no_results_title": "Niente trovato",
       "no_results_description": "Non sono riuscito a trovare risultati per la tua ricerca.\n\nProva di nuovo con parole chiave diverse o verifica se il link è corretto.",

@@ -1,6 +1,7 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { getTranslator } = require('../utils/localeHelpers');
 const { serializeActivity, buildPresencePayload, sanitizeStatusKey } = require('../utils/presenceStore');
+const { v2Reply } = require('../utils/embedV2');
 
 const STATUS_CHOICES = [
   { name: 'Online', value: 'online' },
@@ -188,13 +189,7 @@ async function handleSetStatus(interaction, client, t) {
   }
 
   const statusLabel = t(`commands.admin.status.labels.${statusKey}`);
-  const embed = new EmbedBuilder()
-    .setColor(0x2b2d31)
-    .setTitle(t('commands.admin.setstatus.success_title'))
-    .setDescription(t('commands.admin.setstatus.success_description', { status: statusLabel }))
-    .setTimestamp();
-
-  return interaction.reply({ embeds: [embed], ephemeral: true });
+  return interaction.reply({ ...v2Reply({ color: 0xF53F5F, title: t('commands.admin.setstatus.success_title'), description: t('commands.admin.setstatus.success_description', { status: statusLabel }), timestamp: true }), ephemeral: true });
 }
 
 async function handleSetPresence(interaction, client, t) {
@@ -276,21 +271,14 @@ async function handleSetPresence(interaction, client, t) {
     });
   }
 
-  const embed = new EmbedBuilder()
-    .setColor(0x00ff00)
-    .setTitle(t('commands.admin.setpresence.success.title', { default: '✅ Presence updated' }))
-    .setDescription(description)
-    .setTimestamp();
+  const embed = v2Reply({
+    color: 0xF53F5F,
+    title: t('commands.admin.setpresence.success.title', { default: '✅ Presence updated' }),
+    description: activityType === 'streaming' && url ? `${description}\n\n**${t('commands.admin.setpresence.success.url_label', { default: 'URL' })}**\n${url}` : description,
+    timestamp: true
+  });
 
-  if (activityType === 'streaming' && url) {
-    embed.addFields({
-      name: t('commands.admin.setpresence.success.url_label', { default: 'URL' }),
-      value: url,
-      inline: false
-    });
-  }
-
-  return interaction.reply({ embeds: [embed], ephemeral: true });
+  return interaction.reply({ ...embed, ephemeral: true });
 }
 
 async function handleLogs(interaction, client, t) {
@@ -313,14 +301,13 @@ async function handleLogs(interaction, client, t) {
     const statusKey = enabled ? 'commands.admin.logs.status_enabled' : 'commands.admin.logs.status_disabled';
     const channelId = (process.env.LOG_CHANNEL_ID || '').trim();
     const channelLabel = channelId ? `<#${channelId}>` : t('commands.admin.logs.status_channel_unset');
-    const embed = new EmbedBuilder()
-      .setColor(0x5865f2)
-      .setTitle(t('commands.admin.logs.status_title'))
-      .setDescription(t('commands.admin.logs.status_description', { status: t(statusKey) }))
-      .addFields({ name: t('commands.admin.logs.status_channel_label'), value: channelLabel, inline: false })
-      .setTimestamp();
-
-    return interaction.reply({ embeds: [embed], ephemeral: true });
+    return interaction.reply({ ...v2Reply({
+      color: 0xF53F5F,
+      title: t('commands.admin.logs.status_title'),
+      description: t('commands.admin.logs.status_description', { status: t(statusKey) }),
+      fields: [{ name: t('commands.admin.logs.status_channel_label'), value: channelLabel }],
+      timestamp: true
+    }), ephemeral: true });
   }
 
   if (action !== 'enable' && action !== 'disable') {
@@ -336,14 +323,8 @@ async function handleLogs(interaction, client, t) {
   }
 
   const key = shouldEnable ? 'enable' : 'disable';
-  const colors = { enable: 0x57f287, disable: 0xed4245 };
-  const embed = new EmbedBuilder()
-    .setColor(colors[key])
-    .setTitle(t(`commands.admin.logs.${key}_title`))
-    .setDescription(t(`commands.admin.logs.${key}_description`))
-    .setTimestamp();
-
-  return interaction.reply({ embeds: [embed], ephemeral: true });
+  const colors = { enable: 0xF53F5F, disable: 0xF53F5F };
+  return interaction.reply({ ...v2Reply({ color: colors[key], title: t(`commands.admin.logs.${key}_title`), description: t(`commands.admin.logs.${key}_description`), timestamp: true }), ephemeral: true });
 }
 
 async function handleRestart(interaction, client, t) {
@@ -359,28 +340,18 @@ async function handleRestart(interaction, client, t) {
       ? 'commands.admin.restart.status.scheduled'
       : 'commands.admin.restart.status.not_scheduled';
 
-    const embed = new EmbedBuilder()
-      .setColor(0x5865f2)
-      .setTitle(t('commands.admin.restart.status.title'))
-      .setDescription(t('commands.admin.restart.status.description', { status: t(statusKey) }))
-      .addFields({
-        name: t('commands.admin.restart.status.active_connections_label'),
-        value: String(activeConnections),
-        inline: true
-      })
-      .setTimestamp();
-
-    return interaction.reply({ embeds: [embed], ephemeral: true });
+    return interaction.reply({ ...v2Reply({
+      color: 0xF53F5F,
+      title: t('commands.admin.restart.status.title'),
+      description: t('commands.admin.restart.status.description', { status: t(statusKey) }),
+      fields: [{ name: t('commands.admin.restart.status.active_connections_label'), value: String(activeConnections) }],
+      timestamp: true
+    }), ephemeral: true });
   }
 
   if (action === 'cancel') {
     if (!client._restartState.scheduled) {
-      const embed = new EmbedBuilder()
-        .setColor(0x5865f2)
-        .setTitle(t('commands.admin.restart.cancel.none_title'))
-        .setDescription(t('commands.admin.restart.cancel.none_description'))
-        .setTimestamp();
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+      return interaction.reply({ ...v2Reply({ color: 0xF53F5F, title: t('commands.admin.restart.cancel.none_title'), description: t('commands.admin.restart.cancel.none_description'), timestamp: true }), ephemeral: true });
     }
 
     client._restartState.scheduled = false;
@@ -389,12 +360,7 @@ async function handleRestart(interaction, client, t) {
       client._restartState.interval = null;
     }
 
-    const embed = new EmbedBuilder()
-      .setColor(0xed4245)
-      .setTitle(t('commands.admin.restart.cancel.success_title'))
-      .setDescription(t('commands.admin.restart.cancel.success_description'))
-      .setTimestamp();
-    return interaction.reply({ embeds: [embed], ephemeral: true });
+    return interaction.reply({ ...v2Reply({ color: 0xF53F5F, title: t('commands.admin.restart.cancel.success_title'), description: t('commands.admin.restart.cancel.success_description'), timestamp: true }), ephemeral: true });
   }
 
   if (action !== 'schedule') {
@@ -402,21 +368,11 @@ async function handleRestart(interaction, client, t) {
   }
 
   if (client._restartState.scheduled) {
-    const embed = new EmbedBuilder()
-      .setColor(0xffaa00)
-      .setTitle(t('commands.admin.restart.schedule.already_title'))
-      .setDescription(t('commands.admin.restart.schedule.already_description'))
-      .setTimestamp();
-    return interaction.reply({ embeds: [embed], ephemeral: true });
+    return interaction.reply({ ...v2Reply({ color: 0xF53F5F, title: t('commands.admin.restart.schedule.already_title'), description: t('commands.admin.restart.schedule.already_description'), timestamp: true }), ephemeral: true });
   }
 
   client._restartState.scheduled = true;
-  const embed = new EmbedBuilder()
-    .setColor(0x57f287)
-    .setTitle(t('commands.admin.restart.schedule.success_title'))
-    .setDescription(t('commands.admin.restart.schedule.success_description'))
-    .setTimestamp();
-  await interaction.reply({ embeds: [embed], ephemeral: true });
+  await interaction.reply({ ...v2Reply({ color: 0xF53F5F, title: t('commands.admin.restart.schedule.success_title'), description: t('commands.admin.restart.schedule.success_description'), timestamp: true }), ephemeral: true });
 
   if (client._restartState.interval) {
     clearInterval(client._restartState.interval);
@@ -502,14 +458,7 @@ async function handleLock(interaction, client, t) {
 
   if (mode === 'off') {
     client._commandLock = { enabled: false };
-
-    const embed = new EmbedBuilder()
-      .setColor(0x57f287)
-      .setTitle(t('commands.admin.lock.disabled_title'))
-      .setDescription(t('commands.admin.lock.disabled_description'))
-      .setTimestamp();
-
-    return interaction.reply({ embeds: [embed], ephemeral: true });
+    return interaction.reply({ ...v2Reply({ color: 0xF53F5F, title: t('commands.admin.lock.disabled_title'), description: t('commands.admin.lock.disabled_description'), timestamp: true }), ephemeral: true });
   }
 
   // mode === 'on' → show modal for customization

@@ -32,7 +32,7 @@
     "lavalink_error_title": "Oups, j'ai eu un petit problème de connexion interne.",
     "lavalink_error_description": "Nos serveurs sont instables en ce moment ! Veuillez ne pas retirer le bot du serveur, c'est temporaire et sera bientôt résolu !",
     "node_down_title": "Connexion perdue",
-    "node_down_description": "Le serveur qui diffusait la musique s'est mis hors ligne. Pour réduire les coûts et garder le bot en vie, nous utilisons des serveurs tiers qui peuvent avoir des instabilités temporaires (que nous ne contrôlons pas).\n\nMais comme je suis un bot gentil, j'ai sauvegardé ta file :3",
+    "node_down_description": "Le serveur qui diffusait la musique s'est mis hors ligne.\n\nMais comme je suis un bot gentil, j'ai sauvegardé ta file :3",
     "node_down_recover_button": "Récupérer la file"
   },
   "queue": {
@@ -49,8 +49,8 @@
     "footer_hint": "Utilisez les boutons ci-dessous pour contrôler la lecture"
   },
   "status": {
-    "playing": "🔄 En lecture",
-    "paused": "⏸️ En pause"
+    "playing": "En lecture",
+    "paused": "En pause"
   },
   "player": {
     "lonely": {
@@ -73,6 +73,8 @@
       "option_query": "Lien ou terme de recherche",
       "already_other_channel": "Je suis déjà en train de lire dans un autre salon vocal.",
       "searching": "Recherche en cours...",
+      "loading_track": "Chargement de la piste...",
+      "starting": "Démarrage de la lecture...",
       "no_results": "Je n'ai trouvé aucun résultat pour cette recherche.",
       "no_results_title": "Rien trouvé",
       "no_results_description": "Je n'ai trouvé aucun résultat pour votre recherche.\n\nRéessayez avec des mots-clés différents ou vérifiez si le lien est correct.",

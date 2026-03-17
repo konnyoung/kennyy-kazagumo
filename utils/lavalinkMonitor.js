@@ -1,6 +1,7 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { Constants } = require('shoukaku');
 const { getTranslator } = require('./localeHelpers');
+const { v2Reply } = require('./embedV2');
 
 const WATCHDOG_INTERVAL_MS = 15_000;
 const HEALTHCHECK_INTERVAL_MS = 30_000;
@@ -240,16 +241,10 @@ function createLavalinkMonitor({ client, nodeConfigs = [], log = console.log }) 
 
       try {
         const t = await getTranslator(client, player.guildId);
-        const embed = new EmbedBuilder()
-          .setColor(0xff6b6b)
-          .setTitle(`${process.env.EMOJI_CRY || '<:cry:1453534083983474867>'} ${t('errors.node_down_title')}`)
-          .setDescription(t('errors.node_down_description'))
-          .setFooter({ text: `Node: ${failedName}` })
-          .setTimestamp();
 
         // Add recover queue button if cache exists
         const hasCache = client.queueCache?.hasCache(player.guildId);
-        const components = [];
+        const extraComponents = [];
         
         if (hasCache) {
           const row = new ActionRowBuilder().addComponents(
@@ -259,10 +254,19 @@ function createLavalinkMonitor({ client, nodeConfigs = [], log = console.log }) 
               .setStyle(ButtonStyle.Primary)
               .setEmoji('🔄')
           );
-          components.push(row);
+          extraComponents.push(row);
         }
 
-        await channel.send({ embeds: [embed], components });
+        const payload = v2Reply({
+          color: 0xff6b6b,
+          title: `${process.env.EMOJI_CRY || '<:cry:1453534083983474867>'} ${t('errors.node_down_title')}`,
+          description: t('errors.node_down_description'),
+          footer: `Node: ${failedName}`,
+          timestamp: true,
+          components: extraComponents
+        });
+
+        await channel.send(payload);
         nodeNotifyCache.set(cacheKey, Date.now());
       } catch (error) {
         log(`[Failover] Failed to notify guild ${player.guildId} about node ${failedName}: ${error.message}`);

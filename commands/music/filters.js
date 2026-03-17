@@ -23,10 +23,13 @@ module.exports = {
     }
 
     const state = helpers.getFilterState(player);
-    const embed = helpers.buildFilterEmbed(player, t);
+    const filterPayload = helpers.buildFilterEmbed(player, t);
     const components = helpers.buildFilterComponents(state, t);
 
-    const message = await interaction.reply({ embeds: [embed], components, fetchReply: true });
+    // Inject filter buttons into the V2 container
+    filterPayload.components[0].addActionRowComponents(...components);
+
+    const message = await interaction.reply({ ...filterPayload, fetchReply: true });
 
     state.messageId = message.id;
     state.channelId = message.channelId;

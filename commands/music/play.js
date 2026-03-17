@@ -1,5 +1,6 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const { getTranslator } = require('../../utils/localeHelpers');
+const { v2Reply } = require('../../utils/embedV2');
 
 const TRACK_SOURCE_COLORS = Object.freeze({
   ytmusic: 0xff0050,
@@ -36,20 +37,14 @@ module.exports = {
     // Verificar permissões do bot no canal de voz
     const botMember = interaction.guild.members.me;
     if (!voiceChannel.permissionsFor(botMember).has(['Connect', 'Speak', 'ViewChannel'])) {
-      const permEmbed = new EmbedBuilder()
-        .setColor(0xFF0000)
-        .setTitle(`${process.env.EMOJI_DANCE || '<a:dance_teto:1451252227133018374>'} ${t('common.no_voice_permissions_title') || 'Missing Permissions'}`)
-        .setDescription(t('common.no_voice_permissions'));
-      return interaction.editReply({ embeds: [permEmbed] });
+      const permPayload = v2Reply({ color: 0xFF0000, title: `${process.env.EMOJI_DANCE || '<a:dance_teto:1451252227133018374>'} ${t('common.no_voice_permissions_title') || 'Missing Permissions'}`, description: t('common.no_voice_permissions') });
+      return interaction.editReply(permPayload);
     }
 
     // Verificar permissões do bot no canal de texto
     if (!interaction.channel.permissionsFor(botMember).has(['ViewChannel', 'SendMessages', 'EmbedLinks'])) {
-      const permEmbed = new EmbedBuilder()
-        .setColor(0xFF0000)
-        .setTitle(`${process.env.EMOJI_DANCE || '<a:dance_teto:1451252227133018374>'} ${t('common.no_text_permissions_title') || 'Missing Permissions'}`)
-        .setDescription(t('common.no_text_permissions'));
-      return interaction.editReply({ embeds: [permEmbed] });
+      const permPayload = v2Reply({ color: 0xFF0000, title: `${process.env.EMOJI_DANCE || '<a:dance_teto:1451252227133018374>'} ${t('common.no_text_permissions_title') || 'Missing Permissions'}`, description: t('common.no_text_permissions') });
+      return interaction.editReply(permPayload);
     }
 
     let player = client.kazagumo.players.get(interaction.guildId);
@@ -79,11 +74,8 @@ module.exports = {
     const hasAvailableNode = client.lavalinkMonitor?.hasHealthyNode?.() ?? 
       Array.from(client.kazagumo.shoukaku.nodes.values()).some(n => n.state === 1);
     if (!hasAvailableNode) {
-      const noNodeEmbed = new EmbedBuilder()
-        .setColor(0xff6b6b)
-        .setTitle(`${process.env.EMOJI_CRY || '<:cry:1453534083983474867>'} ${t('errors.lavalink_error_title')}`)
-        .setDescription(t('errors.lavalink_error_description'));
-      return interaction.editReply({ embeds: [noNodeEmbed] });
+      const noNodePayload = v2Reply({ color: 0xff6b6b, title: `${process.env.EMOJI_CRY || '<:cry:1453534083983474867>'} ${t('errors.lavalink_error_title')}`, description: t('errors.lavalink_error_description') });
+      return interaction.editReply(noNodePayload);
     }
 
     if (player && player.voiceId && voiceChannel.id !== player.voiceId) {
@@ -119,11 +111,18 @@ module.exports = {
       player.setTextChannel(interaction.channelId);
     }
 
-    // Show a Python-like "Searching" feedback while we resolve tracks.
-    const searchingEmbed = new EmbedBuilder()
-      .setColor(0x5284ff)
-      .setDescription(`# ${process.env.EMOJI_UNADANCE || '<a:unadance:1450689460307230760>'} ${t('commands.play.searching')}`);
-    await interaction.editReply({ embeds: [searchingEmbed] });
+    // Show a "Searching" feedback while we resolve tracks.
+    const emoji = process.env.EMOJI_UNADANCE || '<a:unadance:1450689460307230760>';
+    const searchingPayload = v2Reply({ color: 0xF53F5F, description: `# ${emoji} ${t('commands.play.searching')}` });
+    await interaction.editReply(searchingPayload);
+
+    // Helper to update the stage message
+    const updateStage = async (key) => {
+      try {
+        const stagePayload = v2Reply({ color: 0xF53F5F, description: `# ${emoji} ${t(key)}` });
+        await interaction.editReply(stagePayload);
+      } catch {}
+    };
 
     try {
       const requester = interaction.user;
@@ -135,16 +134,16 @@ module.exports = {
       const result = await client.kazagumo.search(query, searchOptions);
 
       if (!result.tracks?.length) {
-        const noResultsEmbed = new EmbedBuilder()
-          .setColor(0x00BFFF)
-          .setTitle(`${process.env.EMOJI_PANIC || '<a:panic:1451081526522417252>'} ${t('commands.play.no_results_title')}`)
-          .setDescription(t('commands.play.no_results_description'));
-        await interaction.editReply({ embeds: [noResultsEmbed] });
+        const noResultsPayload = v2Reply({ color: 0x00BFFF, title: `${process.env.EMOJI_PANIC || '<a:panic:1451081526522417252>'} ${t('commands.play.no_results_title')}`, description: t('commands.play.no_results_description') });
+        await interaction.editReply(noResultsPayload);
         if (player && !hadActivePlayer) {
           await player.destroy();
         }
         return;
       }
+
+      // Stage 2: Loading track
+      await updateStage('commands.play.loading_track');
 
       let addedTracks = [];
       if (result.type === 'PLAYLIST') {
@@ -155,11 +154,8 @@ module.exports = {
       } else {
         const track = result.tracks[0];
         if (!track) {
-          const loadFailedEmbed = new EmbedBuilder()
-            .setColor(0x00BFFF)
-            .setTitle(`${process.env.EMOJI_PANIC || '<a:panic:1451081526522417252>'} ${t('commands.play.load_failed_title')}`)
-            .setDescription(t('commands.play.load_failed_description'));
-          await interaction.editReply({ embeds: [loadFailedEmbed] });
+          const loadFailedPayload = v2Reply({ color: 0x00BFFF, title: `${process.env.EMOJI_PANIC || '<a:panic:1451081526522417252>'} ${t('commands.play.load_failed_title')}`, description: t('commands.play.load_failed_description') });
+          await interaction.editReply(loadFailedPayload);
           if (player && !hadActivePlayer) {
             await player.destroy();
           }
@@ -170,6 +166,10 @@ module.exports = {
       }
 
       if (!player.playing && !player.paused) {
+        // Stage 3: Starting playback
+        await updateStage('commands.play.starting');
+        // Store interaction so playerStart can delete it after sending Now Playing
+        player.data.set('searchingInteraction', interaction);
         await player.play();
       }
 
@@ -184,8 +184,7 @@ module.exports = {
         return interaction.editReply(payload);
       }
 
-      // Avoid redundant messages: the now-playing embed will be posted automatically.
-      await interaction.deleteReply().catch(() => {});
+      // Don't delete here — playerStart will clean up after sending the Now Playing embed.
       return;
     } catch (error) {
       // Check if it's a Lavalink connection error
@@ -203,11 +202,8 @@ module.exports = {
           }
         }
         
-        const lavalinkEmbed = new EmbedBuilder()
-          .setColor(0xff6b6b)
-          .setTitle(`${process.env.EMOJI_CRY || '<:cry:1453534083983474867>'} ${t('errors.lavalink_error_title')}`)
-          .setDescription(t('errors.lavalink_error_description'));
-        return interaction.editReply({ embeds: [lavalinkEmbed] });
+        const lavalinkPayload = v2Reply({ color: 0xff6b6b, title: `${process.env.EMOJI_CRY || '<:cry:1453534083983474867>'} ${t('errors.lavalink_error_title')}`, description: t('errors.lavalink_error_description') });
+        return interaction.editReply(lavalinkPayload);
       }
       
       client.emit('error', error);
@@ -217,65 +213,31 @@ module.exports = {
 };
 
 function buildQueuedEmbed({ tracks, playlistName, requester, queueLength, t }) {
-  const embed = new EmbedBuilder().setTimestamp();
   const firstTrack = tracks[0];
   const isPlaylist = Boolean(playlistName && tracks.length > 1);
-  const color = trackSourceColor(firstTrack);
-  if (color) embed.setColor(color);
-  const artwork = getTrackArtwork(firstTrack);
-  if (artwork) embed.setThumbnail(artwork);
+  const color = 0xF53F5F;
+
+  let title, description, fields;
 
   if (isPlaylist) {
-    embed
-      .setTitle(t('commands.play.playlist_title'))
-      .setDescription(
-        t('commands.play.playlist_description', {
-          name: playlistName,
-          count: tracks.length
-        })
-      )
-      .addFields(
-        {
-          name: t('queue.field_first_track'),
-          value: formatTrackTitle(firstTrack) ?? t('common.unknown'),
-          inline: true
-        },
-        {
-          name: t('commands.play.requested_by'),
-          value: formatRequester(requester, t),
-          inline: true
-        }
-      );
+    title = t('commands.play.playlist_title');
+    description = t('commands.play.playlist_description', { name: playlistName, count: tracks.length });
+    fields = [
+      { name: t('queue.field_first_track'), value: formatTrackTitle(firstTrack) ?? t('common.unknown'), inline: true },
+      { name: t('commands.play.requested_by'), value: formatRequester(requester, t), inline: true }
+    ];
   } else {
     const singleTrack = firstTrack ?? {};
-    embed
-      .setTitle(t('commands.play.track_title'))
-      .setDescription(
-        t('commands.play.track_description', {
-          title: formatTrackTitle(singleTrack) ?? t('commands.play.track_title')
-        })
-      )
-      .addFields(
-        {
-          name: t('commands.play.artist'),
-          value: singleTrack.author ?? t('common.unknown'),
-          inline: true
-        },
-        {
-          name: t('commands.play.duration'),
-          value: formatDuration(singleTrack.duration ?? singleTrack.length),
-          inline: true
-        },
-        {
-          name: t('commands.play.requested_by'),
-          value: formatRequester(requester, t),
-          inline: true
-        }
-      );
+    title = t('commands.play.track_title');
+    description = t('commands.play.track_description', { title: formatTrackTitle(singleTrack) ?? t('commands.play.track_title') });
+    fields = [
+      { name: t('commands.play.artist'), value: singleTrack.author ?? t('common.unknown'), inline: true },
+      { name: t('commands.play.duration'), value: formatDuration(singleTrack.duration ?? singleTrack.length), inline: true },
+      { name: t('commands.play.requested_by'), value: formatRequester(requester, t), inline: true }
+    ];
   }
 
-  embed.setFooter({ text: t('commands.play.footer', { count: queueLength }) });
-  return { embeds: [embed] };
+  return v2Reply({ color, title, description, fields, footer: t('commands.play.footer', { count: queueLength }), timestamp: true });
 }
 
 function formatTrackTitle(track = {}) {

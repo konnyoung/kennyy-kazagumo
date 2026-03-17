@@ -1,5 +1,6 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const { getTranslator } = require('../../utils/localeHelpers');
+const { v2Reply } = require('../../utils/embedV2');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -17,30 +18,21 @@ module.exports = {
 
     // Check if cache exists
     if (!client.queueCache?.hasCache(interaction.guildId)) {
-      const noCache = new EmbedBuilder()
-        .setColor(0xff6b6b)
-        .setTitle(`${process.env.EMOJI_PANIC || '<a:panic:1451081526522417252>'} ${t('commands.resumequeue.no_cache_title')}`)
-        .setDescription(t('commands.resumequeue.no_cache_description'));
-      return interaction.editReply({ embeds: [noCache] });
+      const noCache = v2Reply({ color: 0xff6b6b, title: `${process.env.EMOJI_PANIC || '<a:panic:1451081526522417252>'} ${t('commands.resumequeue.no_cache_title')}`, description: t('commands.resumequeue.no_cache_description') });
+      return interaction.editReply(noCache);
     }
 
     const cachedTracks = client.queueCache.getQueue(interaction.guildId);
     if (!cachedTracks?.length) {
-      const noCache = new EmbedBuilder()
-        .setColor(0xff6b6b)
-        .setTitle(`${process.env.EMOJI_PANIC || '<a:panic:1451081526522417252>'} ${t('commands.resumequeue.no_cache_title')}`)
-        .setDescription(t('commands.resumequeue.no_cache_description'));
-      return interaction.editReply({ embeds: [noCache] });
+      const noCache2 = v2Reply({ color: 0xff6b6b, title: `${process.env.EMOJI_PANIC || '<a:panic:1451081526522417252>'} ${t('commands.resumequeue.no_cache_title')}`, description: t('commands.resumequeue.no_cache_description') });
+      return interaction.editReply(noCache2);
     }
 
     // Check bot permissions
     const botMember = interaction.guild.members.me;
     if (!voiceChannel.permissionsFor(botMember).has(['Connect', 'Speak', 'ViewChannel'])) {
-      const permEmbed = new EmbedBuilder()
-        .setColor(0xFF0000)
-        .setTitle(`${process.env.EMOJI_DANCE || '<a:dance_teto:1451252227133018374>'} ${t('common.no_voice_permissions_title') || 'Missing Permissions'}`)
-        .setDescription(t('common.no_voice_permissions'));
-      return interaction.editReply({ embeds: [permEmbed] });
+      const permPayload = v2Reply({ color: 0xFF0000, title: `${process.env.EMOJI_DANCE || '<a:dance_teto:1451252227133018374>'} ${t('common.no_voice_permissions_title') || 'Missing Permissions'}`, description: t('common.no_voice_permissions') });
+      return interaction.editReply(permPayload);
     }
 
     let player = client.kazagumo.players.get(interaction.guildId);
@@ -70,11 +62,8 @@ module.exports = {
     const hasAvailableNode = client.lavalinkMonitor?.hasHealthyNode?.() ?? 
       Array.from(client.kazagumo.shoukaku.nodes.values()).some(n => n.state === 1);
     if (!hasAvailableNode) {
-      const noNodeEmbed = new EmbedBuilder()
-        .setColor(0xff6b6b)
-        .setTitle(`${process.env.EMOJI_CRY || '<:cry:1453534083983474867>'} ${t('errors.lavalink_error_title')}`)
-        .setDescription(t('errors.lavalink_error_description'));
-      return interaction.editReply({ embeds: [noNodeEmbed] });
+      const noNodePayload = v2Reply({ color: 0xff6b6b, title: `${process.env.EMOJI_CRY || '<:cry:1453534083983474867>'} ${t('errors.lavalink_error_title')}`, description: t('errors.lavalink_error_description') });
+      return interaction.editReply(noNodePayload);
     }
 
     // Create player if doesn't exist
@@ -113,10 +102,8 @@ module.exports = {
     let failedCount = 0;
     
     // Show loading embed
-    const loadingEmbed = new EmbedBuilder()
-      .setColor(0x5284ff)
-      .setDescription(`# ${process.env.EMOJI_UNADANCE || '<a:unadance:1450689460307230760>'} ${t('commands.resumequeue.loading') || 'Restoring queue...'}`);
-    await interaction.editReply({ embeds: [loadingEmbed] });
+    const loadingPayload = v2Reply({ color: 0xF53F5F, description: `# ${process.env.EMOJI_UNADANCE || '<a:unadance:1450689460307230760>'} ${t('commands.resumequeue.loading') || 'Restoring queue...'}` });
+    await interaction.editReply(loadingPayload);
     
     for (const cached of cachedTracks) {
       try {
@@ -160,10 +147,7 @@ module.exports = {
     }
 
     if (addedCount === 0) {
-      const failedEmbed = new EmbedBuilder()
-        .setColor(0xff6b6b)
-        .setTitle(`${process.env.EMOJI_PANIC || '<a:panic:1451081526522417252>'} ${t('commands.resumequeue.failed_title')}`)
-        .setDescription(t('commands.resumequeue.failed_description'));
+      const failedPayload = v2Reply({ color: 0xff6b6b, title: `${process.env.EMOJI_PANIC || '<a:panic:1451081526522417252>'} ${t('commands.resumequeue.failed_title')}`, description: t('commands.resumequeue.failed_description') });
       
       if (!hadActivePlayer && player) {
         try {
@@ -172,7 +156,7 @@ module.exports = {
           client.kazagumo.players.delete(interaction.guildId);
         }
       }
-      return interaction.editReply({ embeds: [failedEmbed] });
+      return interaction.editReply(failedPayload);
     }
 
     // Clear cache after successful resume
@@ -185,27 +169,16 @@ module.exports = {
 
     // Build success embed
     const cacheAge = client.queueCache.getCacheAge(interaction.guildId);
-    const embed = new EmbedBuilder()
-      .setColor(0x57f287)
-      .setTitle(`${process.env.EMOJI_DANCE || '<a:dance_teto:1451252227133018374>'} ${t('commands.resumequeue.success_title')}`)
-      .setDescription(t('commands.resumequeue.success_description', { count: addedCount }))
-      .addFields(
-        {
-          name: t('commands.resumequeue.first_track'),
-          value: firstTrack?.title ? `**${firstTrack.title}**` : t('common.unknown'),
-          inline: true
-        },
-        {
-          name: t('commands.resumequeue.queue_size'),
-          value: `${player.queue.length}`,
-          inline: true
-        }
-      )
-      .setTimestamp();
-
-    if (firstTrack?.thumbnail || firstTrack?.artworkUrl) {
-      embed.setThumbnail(firstTrack.thumbnail || firstTrack.artworkUrl);
-    }
+    const successPayload = v2Reply({
+      color: 0xF53F5F,
+      title: `${process.env.EMOJI_DANCE || '<a:dance_teto:1451252227133018374>'} ${t('commands.resumequeue.success_title')}`,
+      description: t('commands.resumequeue.success_description', { count: addedCount }),
+      fields: [
+        { name: t('commands.resumequeue.first_track'), value: firstTrack?.title ? `**${firstTrack.title}**` : t('common.unknown'), inline: true },
+        { name: t('commands.resumequeue.queue_size'), value: `${player.queue.length}`, inline: true }
+      ],
+      timestamp: true
+    });
 
     // Delete loading message and send success
     try {
@@ -213,6 +186,6 @@ module.exports = {
       if (loadingMsg) await loadingMsg.delete();
     } catch {}
     
-    return interaction.channel.send({ embeds: [embed] });
+    return interaction.channel.send(successPayload);
   }
 };

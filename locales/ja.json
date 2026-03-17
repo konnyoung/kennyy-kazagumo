@@ -30,7 +30,7 @@
     "lavalink_error_title": "あれ、内部接続に小さな問題がありました。",
     "lavalink_error_description": "現在、サーバーが不安定です！ボットをサーバーから削除しないでください。一時的なもので、すぐに修正されます！",
     "node_down_title": "接続が切断されました",
-    "node_down_description": "再生していたサーバーがオフラインになりました。コストを抑えてボットを維持するためにサードパーティのサーバーを使っており、一時的に不安定になることがあります（残念ながらこちらでは制御できません）。\n\nでも優しいボットだから、キューを保存しておいたよ :3",
+    "node_down_description": "再生していたサーバーがオフラインになりました。\n\nでも優しいボットだから、キューを保存しておいたよ :3",
     "node_down_recover_button": "キューを復元"
   },
   "queue": {
@@ -47,8 +47,8 @@
     "footer_hint": "下のボタンを使用して再生を制御します"
   },
   "status": {
-    "playing": "🔄 再生中",
-    "paused": "⏸️ 一時停止"
+    "playing": "再生中",
+    "paused": "一時停止"
   },
   "player": {
     "lonely": {
@@ -71,6 +71,8 @@
       "option_query": "リンクまたは検索用語",
       "already_other_channel": "既に別のボイスチャンネルで再生中です。",
       "searching": "検索中...",
+      "loading_track": "トラックを読み込み中...",
+      "starting": "再生を開始中...",
       "no_results": "その検索の結果が見つかりませんでした。",
       "no_results_title": "何も見つかりません",
       "no_results_description": "検索の結果が見つかりませんでした。\n\n別のキーワードで再度試すか、リンクが正しいか確認してください。",

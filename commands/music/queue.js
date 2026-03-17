@@ -14,14 +14,20 @@ module.exports = {
     const helpers = client.queueHelpers;
     const state = { page: 0, perPage: 10, guildId: interaction.guildId };
 
-    const embed = helpers?.buildQueueEmbed
+    const queuePayload = helpers?.buildQueueEmbed
       ? helpers.buildQueueEmbed(player, state.page, state.perPage, t)
       : null;
-    const components = helpers?.buildQueueComponents
+    const navComponents = helpers?.buildQueueComponents
       ? helpers.buildQueueComponents(state.page, state.perPage, player, t)
       : [];
 
-    const payload = embed ? { embeds: [embed], components } : { content: t('queue.title'), components };
+    let payload;
+    if (queuePayload) {
+      queuePayload.components[0].addActionRowComponents(...navComponents);
+      payload = queuePayload;
+    } else {
+      payload = { content: t('queue.title') };
+    }
 
     const message = await interaction.reply({ ...payload, fetchReply: true });
 
