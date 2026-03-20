@@ -532,6 +532,15 @@ function createLavalinkMonitor({ client, nodeConfigs = [], log = console.log }) 
     return false;
   }
 
+  async function destroyPlayerSafe(player) {
+    try {
+      await player.destroy();
+    } catch (error) {
+      // Se destroy falhar, força remoção do map para evitar ghost player
+      try { client.kazagumo.players.delete(player.guildId); } catch {}
+    }
+  }
+
   return {
     start,
     stop,
@@ -540,14 +549,6 @@ function createLavalinkMonitor({ client, nodeConfigs = [], log = console.log }) 
     isNodeHealthy,
     hasHealthyNode
   };
-}
-
-async function destroyPlayerSafe(player) {
-  try {
-    await player.destroy();
-  } catch (error) {
-    // ignore destroy errors
-  }
 }
 
 module.exports = { createLavalinkMonitor };

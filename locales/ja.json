@@ -44,7 +44,8 @@
   "now_playing": {
     "no_track": "利用可能なトラックがありません。",
     "queue_value": "{count}曲",
-    "footer_hint": "下のボタンを使用して再生を制御します"
+    "footer_hint": "下のボタンを使用して再生を制御します",
+    "web_player": "Webプレーヤー (BETA)"
   },
   "status": {
     "playing": "再生中",
@@ -52,12 +53,16 @@
   },
   "player": {
     "lonely": {
-      "pause_title": "え！一人にされちゃった :(",
-      "pause": "誰かが戻るまで2分間キューを一時停止します。そうでなければ、切断します！",
-      "resume_title": "やった！もう一人じゃない :D",
-      "resume": "誰かが{call}に参加しました！キューを再開します。",
-      "disconnect_title": "まあ、帰るね、誰も戻ってこなかったし...",
-      "disconnect": "誰も{call}に戻ってきませんでした。今すぐ切断します。"
+      "expired_title": "まあ、帰るね、誰も戻ってこなかったし...",
+      "expired": "2分以内に誰も戻ってきませんでした。保存されたキューは破棄されました。",
+      "return_title": "おっ！誰か戻ってきた！",
+      "return_description": "{user}、**{track}** を `{position}/{duration}` で再生中で、キューに **{queue}** 曲ありました。続けますか？",
+      "btn_restore": "キューを続ける",
+      "btn_new": "いいえ、大丈夫です",
+      "snapshot_expired": "保存されたセッションはすでに期限切れです。",
+      "restore_failed": "キューの復元に失敗しました。/play をもう一度お試しください。",
+      "discarded_title": "キューを破棄しました",
+      "discarded": "前のキューは破棄されました。/play で新しいキューを始めましょう！"
     }
   },
   "loop": {

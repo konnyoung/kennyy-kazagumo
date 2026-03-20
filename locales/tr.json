@@ -44,7 +44,8 @@
   "now_playing": {
     "no_track": "Kullanılabilir parça yok.",
     "queue_value": "{count} parça",
-    "footer_hint": "Oynatmayı kontrol etmek için aşağıdaki düğmeleri kullanın"
+    "footer_hint": "Oynatmayı kontrol etmek için aşağıdaki düğmeleri kullanın",
+    "web_player": "Web Oynatıcı (BETA)"
   },
   "status": {
     "playing": "Çalıyor",
@@ -52,12 +53,16 @@
   },
   "player": {
     "lonely": {
-      "pause_title": "Eyvah! Beni yalnız bıraktılar :(",
-      "pause": "Birisi geri dönene kadar 2 dakika boyunca kuyruğu duraklatacağım. Aksi takdirde bağlantıyı keseceğim!",
-      "resume_title": "Yaşasın! Artık yalnız değilim :D",
-      "resume": "Birisi {call} kanalına katıldı! Kuyruk devam ediyor.",
-      "disconnect_title": "Peki, gidiyorum, kimse dönmedi zaten...",
-      "disconnect": "{call} kanalına kimse geri dönmedi. Şimdi bağlantıyı kesiyorum."
+      "expired_title": "Peki, gidiyorum, kimse dönmedi...",
+      "expired": "2 dakika içinde kimse geri dönmedi. Kaydedilen kuyruk silindi.",
+      "return_title": "Hey! Biri geri döndü!",
+      "return_description": "{user}, **{track}** parçasını `{position}/{duration}` konumunda çalıyordum ve kuyrukta **{queue}** parça vardı. Devam etmek ister misin?",
+      "btn_restore": "Kuyruğa devam et",
+      "btn_new": "Hayır, teşekkürler",
+      "snapshot_expired": "Kaydedilen oturum zaten süresi dolmuş.",
+      "restore_failed": "Kuyruk geri yüklenemedi. /play komutunu tekrar deneyin.",
+      "discarded_title": "Kuyruk silindi",
+      "discarded": "Önceki kuyruk silindi. Yeni bir tane başlatmak için /play kullanın!"
     }
   },
   "loop": {

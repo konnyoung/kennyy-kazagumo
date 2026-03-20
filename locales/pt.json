@@ -46,7 +46,8 @@
   "now_playing": {
     "no_track": "Nenhuma faixa disponível.",
     "queue_value": "{count} música(s)",
-    "footer_hint": "Use os botões abaixo para controlar a reprodução"
+    "footer_hint": "Use os botões abaixo para controlar a reprodução",
+    "web_player": "Web Player (BETA)"
   },
   "status": {
     "playing": "Tocando",
@@ -54,12 +55,16 @@
   },
   "player": {
     "lonely": {
-      "pause_title": "Eita! Me deixaram só :(",
-      "pause": "Irei pausar a fila por 2 minutos até alguém retornar. Caso contrário, irei me desconectar!",
-      "resume_title": "Yay! Não estou mais sozinho :D",
-      "resume": "Alguém entrou em {call}! Retomando a fila.",
-      "disconnect_title": "Bem, estou indo embora, ninguém voltou mesmo...",
-      "disconnect": "Ninguém voltou para {call}. Irei me desconectar agora."
+      "expired_title": "Bem, estou indo embora, ninguém voltou...",
+      "expired": "Ninguém voltou em 2 minutos. A fila salva foi descartada.",
+      "return_title": "Ei! Alguém voltou!",
+      "return_description": "{user}, eu estava tocando **{track}** em `{position}/{duration}` com **{queue}** faixa(s) na fila. Quer continuar?",
+      "btn_restore": "Continuar fila",
+      "btn_new": "Não, valeu",
+      "snapshot_expired": "A sessão salva já expirou.",
+      "restore_failed": "Falha ao restaurar a fila. Tente usar /play novamente.",
+      "discarded_title": "Fila descartada",
+      "discarded": "A fila anterior foi descartada. Use /play para começar uma nova!"
     }
   },
   "loop": {

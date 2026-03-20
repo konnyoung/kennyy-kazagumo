@@ -67,6 +67,11 @@ module.exports = {
       }
     }
     
+    // Clear any leftover lonely-leave snapshot for this guild
+    if (client.afkSnapshots?.has(interaction.guildId)) {
+      client.afkSnapshots.delete(interaction.guildId);
+    }
+
     const hadActivePlayer = Boolean(player && (player.queue.length || player.playing || player.paused));
     const preferredNodeName = client.lavalinkMonitor?.getLeastUsedNodeName?.();
 

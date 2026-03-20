@@ -46,7 +46,8 @@
   "now_playing": {
     "no_track": "Aucune piste disponible.",
     "queue_value": "{count} piste(s)",
-    "footer_hint": "Utilisez les boutons ci-dessous pour contrôler la lecture"
+    "footer_hint": "Utilisez les boutons ci-dessous pour contrôler la lecture",
+    "web_player": "Web Player (BÊTA)"
   },
   "status": {
     "playing": "En lecture",
@@ -54,12 +55,16 @@
   },
   "player": {
     "lonely": {
-      "pause_title": "Oh là là ! Ils m'ont laissé seul :(",
-      "pause": "Je vais mettre en pause la file d'attente pendant 2 minutes jusqu'à ce que quelqu'un revienne. Sinon, je me déconnecterai !",
-      "resume_title": "Yay ! Je ne suis plus seul :D",
-      "resume": "Quelqu'un a rejoint {call} ! Reprise de la file d'attente.",
-      "disconnect_title": "Bon, je m'en vais, personne n'est revenu...",
-      "disconnect": "Personne n'est revenu dans {call}. Je me déconnecte maintenant."
+      "expired_title": "Bon, je m'en vais, personne n'est revenu...",
+      "expired": "Personne n'est revenu en 2 minutes. La file d'attente sauvegardée a été supprimée.",
+      "return_title": "Hé ! Quelqu'un est de retour !",
+      "return_description": "{user}, je jouais **{track}** à `{position}/{duration}` avec **{queue}** piste(s) dans la file. Voulez-vous continuer ?",
+      "btn_restore": "Continuer la file",
+      "btn_new": "Non, merci",
+      "snapshot_expired": "La session sauvegardée a déjà expiré.",
+      "restore_failed": "Échec de la restauration de la file. Essayez d'utiliser /play à nouveau.",
+      "discarded_title": "File supprimée",
+      "discarded": "La file précédente a été supprimée. Utilisez /play pour en commencer une nouvelle !"
     }
   },
   "loop": {

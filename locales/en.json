@@ -46,7 +46,8 @@
   "now_playing": {
     "no_track": "No track available.",
     "queue_value": "{count} track(s)",
-    "footer_hint": "Use the buttons below to control playback"
+    "footer_hint": "Use the buttons below to control playback",
+    "web_player": "Web Player (BETA)"
   },
   "status": {
     "playing": "Playing",
@@ -54,12 +55,16 @@
   },
   "player": {
     "lonely": {
-      "pause_title": "Oops! They left me alone :(",
-      "pause": "I'll pause the queue for 2 minutes until someone returns. Otherwise, I'll disconnect!",
-      "resume_title": "Yay! I'm not alone anymore :D",
-      "resume": "Someone joined {call}! Resuming the queue.",
-      "disconnect_title": "Well, I'm leaving, nobody came back...",
-      "disconnect": "Nobody came back to {call}. I'm disconnecting now."
+      "expired_title": "Well, I'm leaving, nobody came back...",
+      "expired": "Nobody returned within 2 minutes. The saved queue has been discarded.",
+      "return_title": "Hey! Someone's back!",
+      "return_description": "{user}, I was playing **{track}** at `{position}/{duration}` with **{queue}** track(s) in the queue. Want to continue?",
+      "btn_restore": "Continue queue",
+      "btn_new": "No, thanks",
+      "snapshot_expired": "The saved session has already expired.",
+      "restore_failed": "Failed to restore the queue. Try using /play again.",
+      "discarded_title": "Queue discarded",
+      "discarded": "The previous queue was discarded. Use /play to start a new one!"
     }
   },
   "loop": {

@@ -44,7 +44,8 @@
   "now_playing": {
     "no_track": "Nessuna traccia disponibile.",
     "queue_value": "{count} traccia/e",
-    "footer_hint": "Usa i pulsanti qui sotto per controllare la riproduzione"
+    "footer_hint": "Usa i pulsanti qui sotto per controllare la riproduzione",
+    "web_player": "Web Player (BETA)"
   },
   "status": {
     "playing": "In riproduzione",
@@ -52,12 +53,16 @@
   },
   "player": {
     "lonely": {
-      "pause_title": "Accidenti! Mi hanno lasciato solo :(",
-      "pause": "Metterò in pausa la coda per 2 minuti fino al ritorno di qualcuno. Altrimenti, mi disconnetterò!",
-      "resume_title": "Evviva! Non sono più solo :D",
-      "resume": "Qualcuno è entrato in {call}! Ripresa della coda.",
-      "disconnect_title": "Beh, me ne vado, nessuno è tornato davvero...",
-      "disconnect": "Nessuno è tornato in {call}. Mi disconnetto ora."
+      "expired_title": "Beh, me ne vado, nessuno è tornato...",
+      "expired": "Nessuno è tornato entro 2 minuti. La coda salvata è stata eliminata.",
+      "return_title": "Ehi! Qualcuno è tornato!",
+      "return_description": "{user}, stavo riproducendo **{track}** a `{position}/{duration}` con **{queue}** traccia/e in coda. Vuoi continuare?",
+      "btn_restore": "Continua la coda",
+      "btn_new": "No, grazie",
+      "snapshot_expired": "La sessione salvata è già scaduta.",
+      "restore_failed": "Impossibile ripristinare la coda. Prova a usare /play di nuovo.",
+      "discarded_title": "Coda eliminata",
+      "discarded": "La coda precedente è stata eliminata. Usa /play per iniziarne una nuova!"
     }
   },
   "loop": {

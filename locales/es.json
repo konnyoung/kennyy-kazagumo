@@ -46,7 +46,8 @@
   "now_playing": {
     "no_track": "No hay pista disponible.",
     "queue_value": "{count} pista(s)",
-    "footer_hint": "Usa los botones de abajo para controlar la reproducción"
+    "footer_hint": "Usa los botones de abajo para controlar la reproducción",
+    "web_player": "Web Player (BETA)"
   },
   "status": {
     "playing": "Reproduciendo",
@@ -54,12 +55,16 @@
   },
   "player": {
     "lonely": {
-      "pause_title": "¡Vaya! Me dejaron solo :(",
-      "pause": "Pausaré la cola durante 2 minutos hasta que alguien regrese. De lo contrario, me desconectaré!",
-      "resume_title": "¡Yay! Ya no estoy solo :D",
-      "resume": "¡Alguien se unió a {call}! Reanudando la cola.",
-      "disconnect_title": "Bueno, me voy, nadie volvió en realidad...",
-      "disconnect": "Nadie volvió a {call}. Me desconectaré ahora."
+      "expired_title": "Bueno, me voy, nadie volvió...",
+      "expired": "Nadie regresó en 2 minutos. La cola guardada fue descartada.",
+      "return_title": "¡Oye! ¡Alguien volvió!",
+      "return_description": "{user}, estaba reproduciendo **{track}** en `{position}/{duration}` con **{queue}** pista(s) en la cola. ¿Quieres continuar?",
+      "btn_restore": "Continuar cola",
+      "btn_new": "No, gracias",
+      "snapshot_expired": "La sesión guardada ya ha expirado.",
+      "restore_failed": "Error al restaurar la cola. Intenta usar /play de nuevo.",
+      "discarded_title": "Cola descartada",
+      "discarded": "La cola anterior fue descartada. ¡Usa /play para empezar una nueva!"
     }
   },
   "loop": {
