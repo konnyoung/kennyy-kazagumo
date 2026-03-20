@@ -10,6 +10,7 @@ const {
   Client,
   Collection,
   ContainerBuilder,
+  EmbedBuilder,
   Events,
   GatewayIntentBits,
   MediaGalleryBuilder,
@@ -30,10 +31,13 @@ const { startTerminalPanel } = require('./utils/terminalPanel');
 const { createI18n } = require('./utils/i18n');
 const { createLogSettingsStore } = require('./utils/logSettingsStore');
 const { createPresenceStore } = require('./utils/presenceStore');
+const { sendBotLog } = require('./utils/webhookLogger');
 const { getTranslator } = require('./utils/localeHelpers');
+const sessionStore = require('./utils/sessionStore');
 const { fetchLyrics, findLineIndex, renderTimedSnippet, getApproxPositionMs } = require('./utils/lyricsManager');
 const { buildV2Container, v2Payload, v2Reply } = require('./utils/embedV2');
 const { createQueueCacheStore } = require('./utils/queueCacheStore');
+const { createApiServer } = require('./api/server');
 
 console.log('🚀 Iniciando Music Bot...');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -159,6 +163,17 @@ log('📂 Carregando comandos...');
 client.commands = new Collection();
 const slashDefinitions = [];
 loadCommands(path.join(__dirname, 'commands'));
+
+// Entry point command para a Discord Activity (tipo 4 = PRIMARY_ENTRY_POINT)
+slashDefinitions.push({
+  name: 'player',
+  description: 'Abrir o WebPlayer no Discord',
+  type: 4,           // PRIMARY_ENTRY_POINT
+  integration_types: [0],  // 0 = guild install
+  contexts: [0],           // 0 = guild channel (canal de voz)
+  handler: 1               // 1 = Activity launch (abre o iframe)
+});
+
 log(`✅ ${client.commands.size} comandos carregados`);
 
 client.queueState = new Map();
@@ -263,26 +278,9 @@ client.softRestart = async () => {
 client.kazagumo.shoukaku.on('ready', async name => {
   log(`🟢 Lavalink: Nó '${name}' está pronto!`);
 
-  // Quando um node reconecta, destruir todos os players desse node
-  // para evitar "Session not found" - força rebuild com nova sessão
-  const affectedPlayers = Array.from(client.kazagumo.players.values()).filter(player => {
-    const playerNodeName = player?.shoukaku?.node?.name;
-    return playerNodeName === name;
-  });
-
-  if (affectedPlayers.length > 0) {
-    log(`[Reconnect] Limpando ${affectedPlayers.length} player(s) do nó reconectado '${name}'...`);
-    for (const player of affectedPlayers) {
-      try {
-        await player.destroy();
-        log(`[Reconnect] Player ${player.guildId} destruído com sucesso.`);
-      } catch (error) {
-        // Força remoção se destroy falhar
-        client.kazagumo.players.delete(player.guildId);
-        log(`[Reconnect] Player ${player.guildId} removido forcadamente.`);
-      }
-    }
-  }
+  // Node reconnected — NÃO destruir players.
+  // Com resumeTimeout configurado, as sessões sobrevivem reconexões.
+  // Destruir aqui causava cascata de RestError: Forbidden.
 });
 
 client.kazagumo.shoukaku.on('error', (name, error) => {
@@ -392,26 +390,67 @@ client.kazagumo.on('playerEmpty', async player => {
     if (client.kazagumo.players.get(player.guildId)) {
       await player.destroy();
     }
-  } catch {}
+  } catch (err) {
+    // Se destroy falhar (ex: Forbidden), força remoção do map para evitar ghost player
+    client.kazagumo.players.delete(player.guildId);
+    log(`[playerEmpty] Destroy failed for ${player.guildId}, force-removed: ${err?.message ?? err}`);
+  }
 });
 
 client.kazagumo.on('playerDestroy', async player => {
   cleanupProgressUpdater(player);
   await deleteNowPlayingEmbed(player);
+  // Clear web-dashboard permission session when the player is destroyed
+  sessionStore.clearSession(player.guildId);
 });
 
-client.once(Events.ClientReady, async readyClient => {
-  log(`🟢 ${readyClient.user.tag} está online!`);
-  log(`🆔 ID do Bot: ${readyClient.user.id}`);
+function formatDiscordApiError(error) {
+  if (!error) return 'Unknown error';
+  const base = error?.message || String(error);
+  const code = error?.code ? ` (code: ${error.code})` : '';
+  let details = '';
+  if (error?.rawError) {
+    try {
+      details = ` | rawError: ${JSON.stringify(error.rawError)}`;
+    } catch {
+      // ignore stringify failures
+    }
+  }
+  return `${base}${code}${details}`;
+}
 
+async function syncSlashCommands(readyClient) {
   try {
     await rest.put(Routes.applicationCommands(readyClient.user.id), {
       body: slashDefinitions
     });
     log(`✅ Sincronizados ${slashDefinitions.length} comandos slash`);
+    return;
   } catch (error) {
-    log(`❌ Falha ao sincronizar comandos: ${error.message}`);
+    log(`❌ Falha ao sincronizar comandos (tentativa principal): ${formatDiscordApiError(error)}`);
   }
+
+  // Fallback: se o comando PRIMARY_ENTRY_POINT for rejeitado, sincroniza os demais.
+  const fallbackBody = slashDefinitions.filter(cmd => cmd?.type !== 4);
+  if (fallbackBody.length === slashDefinitions.length) {
+    return;
+  }
+
+  try {
+    await rest.put(Routes.applicationCommands(readyClient.user.id), {
+      body: fallbackBody
+    });
+    log(`⚠️ Activity entry point rejeitado. Sincronizados ${fallbackBody.length} comandos sem o /player (type 4).`);
+  } catch (fallbackError) {
+    log(`❌ Falha também no fallback de sincronização: ${formatDiscordApiError(fallbackError)}`);
+  }
+}
+
+client.once(Events.ClientReady, async readyClient => {
+  log(`🟢 ${readyClient.user.tag} está online!`);
+  log(`🆔 ID do Bot: ${readyClient.user.id}`);
+
+  await syncSlashCommands(readyClient);
 
   if (!panelController) {
     panelController = startTerminalPanel({ monitor: lavalinkMonitor, log });
@@ -431,49 +470,55 @@ client.once(Events.ClientReady, async readyClient => {
   log(`📊 Servidores: ${readyClient.guilds.cache.size}`);
   log(`👥 Usuários: ${readyClient.guilds.cache.reduce((acc, guild) => acc + guild.memberCount, 0)}`);
   log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+  // Start API server
+  if (process.env.API_ENABLED === 'true') {
+    try {
+      createApiServer(client);
+    } catch (error) {
+      log(`❌ Falha ao iniciar API: ${error.message}`);
+    }
+  }
 });
 
 client.on(Events.GuildCreate, async guild => {
   log(`📥 Bot joined guild: ${guild.name} (ID: ${guild.id})`);
-  
-  const logChannelId = process.env.LOG_CHANNEL_ID;
-  if (!logChannelId || !client.logSettingsStore) {
-    return;
-  }
 
-  let enabled = false;
-  try {
-    enabled = await client.logSettingsStore.isMusicLogsEnabled();
-  } catch (error) {
-    log(`[Logs] Failed to check log status: ${error.message}`);
-    return;
-  }
+  if (!process.env.BOT_LOGS_WEBHOOK_URL) return;
 
-  if (!enabled) {
-    return;
-  }
-
-  try {
-    const logChannel = await client.channels.fetch(logChannelId);
-    if (!logChannel?.isTextBased()) {
+  if (client.logSettingsStore) {
+    let enabled = false;
+    try {
+      enabled = await client.logSettingsStore.isMusicLogsEnabled();
+    } catch (error) {
+      log(`[Logs] Failed to check log status: ${error.message}`);
       return;
     }
+    if (!enabled) return;
+  }
 
+  try {
     const t = await getTranslator(client, guild.id);
     const unknown = t('logs.common.unknown', { default: 'Desconhecido' });
-    const fields = [
-      { name: t('logs.guild_join.fields.name', { default: 'Nome do Servidor' }), value: guild.name },
-      { name: t('logs.guild_join.fields.id', { default: 'ID do Servidor' }), value: `\`${guild.id}\`` }
-    ];
+
+    const embed = new EmbedBuilder()
+      .setTitle(t('logs.guild_join.title', { default: '📥 Entrei em um novo servidor!' }))
+      .setColor(0x00ff00)
+      .setTimestamp();
+
+    embed.addFields(
+      { name: t('logs.guild_join.fields.name', { default: 'Nome do Servidor' }), value: guild.name, inline: false },
+      { name: t('logs.guild_join.fields.id', { default: 'ID do Servidor' }), value: `\`${guild.id}\``, inline: true }
+    );
 
     if (guild.memberCount) {
-      fields.push({ name: t('logs.guild_join.fields.members', { default: 'Membros' }), value: t('logs.common.member_count', { default: '{count} membros', count: guild.memberCount.toLocaleString() }) });
+      embed.addFields({ name: t('logs.guild_join.fields.members', { default: 'Membros' }), value: t('logs.common.member_count', { default: '{count} membros', count: guild.memberCount.toLocaleString() }), inline: true });
     }
     if (guild.ownerId) {
-      fields.push({ name: t('logs.guild_join.fields.owner', { default: 'Dono' }), value: `<@${guild.ownerId}> (\`${guild.ownerId}\`)` });
+      embed.addFields({ name: t('logs.guild_join.fields.owner', { default: 'Dono' }), value: `<@${guild.ownerId}> (\`${guild.ownerId}\`)`, inline: true });
     }
     if (guild.createdAt) {
-      fields.push({ name: t('logs.guild_join.fields.created_at', { default: 'Criado em' }), value: guild.createdAt.toLocaleDateString('pt-BR') });
+      embed.addFields({ name: t('logs.guild_join.fields.created_at', { default: 'Criado em' }), value: guild.createdAt.toLocaleDateString('pt-BR'), inline: true });
     }
 
     const verificationLevels = {
@@ -484,26 +529,25 @@ client.on(Events.GuildCreate, async guild => {
       4: 'logs.common.verification.highest'
     };
     const verificationKey = verificationLevels[guild.verificationLevel] || 'logs.common.unknown';
-    fields.push({ name: t('logs.guild_join.fields.verification', { default: 'Verificação' }), value: t(verificationKey, { default: unknown }) });
+    embed.addFields({ name: t('logs.guild_join.fields.verification', { default: 'Verificação' }), value: t(verificationKey, { default: unknown }), inline: true });
 
     const boostCount = guild.premiumSubscriptionCount || 0;
     const boostKey = boostCount ? 'logs.common.boost.with_count' : 'logs.common.boost.basic';
-    fields.push({
+    embed.addFields({
       name: t('logs.guild_join.fields.boost', { default: 'Boost' }),
-      value: t(boostKey, { default: boostCount ? `Nível ${guild.premiumTier} (${boostCount} boosts)` : `Nível ${guild.premiumTier}`, tier: guild.premiumTier, count: boostCount })
+      value: t(boostKey, { default: boostCount ? `Nível ${guild.premiumTier} (${boostCount} boosts)` : `Nível ${guild.premiumTier}`, tier: guild.premiumTier, count: boostCount }),
+      inline: true
     });
-
-    fields.push({
+    embed.addFields({
       name: t('logs.guild_join.fields.total', { default: 'Total de Servidores' }),
-      value: t('logs.guild_join.summary', { default: '🌐 Agora estou em **{total}** servidores!', total: client.guilds.cache.size })
+      value: t('logs.guild_join.summary', { default: '🌐 Agora estou em **{total}** servidores!', total: client.guilds.cache.size }),
+      inline: false
     });
 
-    await logChannel.send(v2Reply({
-      color: 0xF53F5F,
-      title: t('logs.guild_join.title', { default: '📥 Entrei em um novo servidor!' }),
-      fields,
-      timestamp: true
-    }));
+    if (guild.iconURL()) embed.setThumbnail(guild.iconURL({ size: 256 }));
+    if (guild.bannerURL()) embed.setImage(guild.bannerURL({ size: 1024 }));
+
+    await sendBotLog({ embeds: [embed] });
   } catch (error) {
     log(`Failed to send guild join log: ${error.message}`);
   }
@@ -511,45 +555,42 @@ client.on(Events.GuildCreate, async guild => {
 
 client.on(Events.GuildDelete, async guild => {
   log(`📤 Bot left guild: ${guild.name} (ID: ${guild.id})`);
-  
-  const logChannelId = process.env.LOG_CHANNEL_ID;
-  if (!logChannelId || !client.logSettingsStore) {
-    return;
-  }
 
-  let enabled = false;
-  try {
-    enabled = await client.logSettingsStore.isMusicLogsEnabled();
-  } catch (error) {
-    log(`[Logs] Failed to check log status: ${error.message}`);
-    return;
-  }
+  if (!process.env.BOT_LOGS_WEBHOOK_URL) return;
 
-  if (!enabled) {
-    return;
-  }
-
-  try {
-    const logChannel = await client.channels.fetch(logChannelId);
-    if (!logChannel?.isTextBased()) {
+  if (client.logSettingsStore) {
+    let enabled = false;
+    try {
+      enabled = await client.logSettingsStore.isMusicLogsEnabled();
+    } catch (error) {
+      log(`[Logs] Failed to check log status: ${error.message}`);
       return;
     }
+    if (!enabled) return;
+  }
 
+  try {
     const t = await getTranslator(client, guild.id);
     const unknown = t('logs.common.unknown', { default: 'Desconhecido' });
-    const fields = [
-      { name: t('logs.guild_remove.fields.name', { default: 'Nome do Servidor' }), value: guild.name },
-      { name: t('logs.guild_remove.fields.id', { default: 'ID do Servidor' }), value: `\`${guild.id}\`` }
-    ];
+
+    const embed = new EmbedBuilder()
+      .setTitle(t('logs.guild_remove.title', { default: '📤 Saí de um servidor' }))
+      .setColor(0xff0000)
+      .setTimestamp();
+
+    embed.addFields(
+      { name: t('logs.guild_remove.fields.name', { default: 'Nome do Servidor' }), value: guild.name, inline: false },
+      { name: t('logs.guild_remove.fields.id', { default: 'ID do Servidor' }), value: `\`${guild.id}\``, inline: true }
+    );
 
     if (guild.memberCount) {
-      fields.push({ name: t('logs.guild_remove.fields.members', { default: 'Membros' }), value: t('logs.common.member_count', { default: '{count} membros', count: guild.memberCount.toLocaleString() }) });
+      embed.addFields({ name: t('logs.guild_remove.fields.members', { default: 'Membros' }), value: t('logs.common.member_count', { default: '{count} membros', count: guild.memberCount.toLocaleString() }), inline: true });
     }
     if (guild.ownerId) {
-      fields.push({ name: t('logs.guild_remove.fields.owner', { default: 'Dono' }), value: `<@${guild.ownerId}> (\`${guild.ownerId}\`)` });
+      embed.addFields({ name: t('logs.guild_remove.fields.owner', { default: 'Dono' }), value: `<@${guild.ownerId}> (\`${guild.ownerId}\`)`, inline: true });
     }
     if (guild.createdAt) {
-      fields.push({ name: t('logs.guild_remove.fields.created_at', { default: 'Criado em' }), value: guild.createdAt.toLocaleDateString('pt-BR') });
+      embed.addFields({ name: t('logs.guild_remove.fields.created_at', { default: 'Criado em' }), value: guild.createdAt.toLocaleDateString('pt-BR'), inline: true });
     }
 
     const verificationLevels = {
@@ -560,26 +601,25 @@ client.on(Events.GuildDelete, async guild => {
       4: 'logs.common.verification.highest'
     };
     const verificationKey = verificationLevels[guild.verificationLevel] || 'logs.common.unknown';
-    fields.push({ name: t('logs.guild_remove.fields.verification', { default: 'Verificação' }), value: t(verificationKey, { default: unknown }) });
+    embed.addFields({ name: t('logs.guild_remove.fields.verification', { default: 'Verificação' }), value: t(verificationKey, { default: unknown }), inline: true });
 
     const boostCount = guild.premiumSubscriptionCount || 0;
     const boostKey = boostCount ? 'logs.common.boost.with_count' : 'logs.common.boost.basic';
-    fields.push({
+    embed.addFields({
       name: t('logs.guild_remove.fields.boost', { default: 'Boost' }),
-      value: t(boostKey, { default: boostCount ? `Nível ${guild.premiumTier} (${boostCount} boosts)` : `Nível ${guild.premiumTier}`, tier: guild.premiumTier, count: boostCount })
+      value: t(boostKey, { default: boostCount ? `Nível ${guild.premiumTier} (${boostCount} boosts)` : `Nível ${guild.premiumTier}`, tier: guild.premiumTier, count: boostCount }),
+      inline: true
     });
-
-    fields.push({
+    embed.addFields({
       name: t('logs.guild_remove.fields.total', { default: 'Total de Servidores' }),
-      value: t('logs.guild_remove.summary', { default: '🌐 Agora estou em **{total}** servidores', total: client.guilds.cache.size })
+      value: t('logs.guild_remove.summary', { default: '🌐 Agora estou em **{total}** servidores', total: client.guilds.cache.size }),
+      inline: false
     });
 
-    await logChannel.send(v2Reply({
-      color: 0xF53F5F,
-      title: t('logs.guild_remove.title', { default: '📤 Saí de um servidor' }),
-      fields,
-      timestamp: true
-    }));
+    if (guild.iconURL()) embed.setThumbnail(guild.iconURL({ size: 256 }));
+    if (guild.bannerURL()) embed.setImage(guild.bannerURL({ size: 1024 }));
+
+    await sendBotLog({ embeds: [embed] });
   } catch (error) {
     log(`Failed to send guild leave log: ${error.message}`);
   }
@@ -590,13 +630,88 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
   const guild = oldState.guild || newState.guild;
   if (!guild) return;
 
+  // Bot was kicked/disconnected from voice
+  if (oldState.member?.id === client.user?.id && oldState.channelId && !newState.channelId) {
+    // If aloneTimeouts has an entry, this disconnect was triggered by activateLonelyLeave — keep the snapshot
+    if (!aloneTimeouts.has(guild.id)) {
+      const player = client.kazagumo.players.get(guild.id);
+      if (player) {
+        cleanupProgressUpdater(player);
+        await deleteNowPlayingEmbed(player);
+        await stopLyrics(player, { deleteMessage: true });
+        try { await player.destroy(); } catch { client.kazagumo.players.delete(guild.id); }
+      }
+      // Clear any snapshot (bot was forcibly kicked)
+      if (afkSnapshots.has(guild.id)) {
+        afkSnapshots.delete(guild.id);
+      }
+    }
+    return;
+  }
+
+  // Bot was moved to another voice channel — update voiceId, keep playing
+  if (oldState.member?.id === client.user?.id && oldState.channelId && newState.channelId && oldState.channelId !== newState.channelId) {
+    const player = client.kazagumo.players.get(guild.id);
+    if (player) {
+      player.voiceId = newState.channelId;
+      const newChannel = guild.channels.cache.get(newState.channelId);
+      if (newChannel && countNonBotListeners(newChannel) === 0) {
+        // Moved to empty channel — start a 2-min silent disconnect timer
+        const existing = aloneTimeouts.get(guild.id);
+        if (existing) clearTimeout(existing);
+        const timeout = setTimeout(async () => {
+          aloneTimeouts.delete(guild.id);
+          const p = client.kazagumo.players.get(guild.id);
+          if (!p) return;
+          const ch = guild.channels.cache.get(p.voiceId);
+          if (ch && countNonBotListeners(ch) > 0) return; // someone joined meanwhile
+          cleanupProgressUpdater(p);
+          await deleteNowPlayingEmbed(p);
+          await stopLyrics(p, { deleteMessage: true });
+          try { await p.destroy(); } catch { client.kazagumo.players.delete(guild.id); }
+          log(`🔌 Desconectado após 2min sozinho (movido) em ${guild.name}`);
+        }, 120000);
+        aloneTimeouts.set(guild.id, timeout);
+      }
+    }
+    return;
+  }
+
   // Only evaluate if someone other than the bot changed state
   if (newState.member?.id !== client.user?.id) {
+    // Transfer admin if the leaving user was the session admin
+    if (oldState.channelId && (!newState.channelId || newState.channelId !== oldState.channelId)) {
+      const player = client.kazagumo.players.get(guild.id);
+      if (player && player.voiceId === oldState.channelId) {
+        const channel = guild.channels.cache.get(oldState.channelId);
+        const remainingIds = [...(channel?.members.values() || [])]
+          .filter(m => !m.user.bot && m.id !== oldState.member.id)
+          .map(m => m.id);
+        sessionStore.handleUserLeave(guild.id, oldState.member.id, remainingIds);
+      }
+    }
     await evaluateVoiceChannel(guild);
   }
 });
 
 client.on(Events.InteractionCreate, async interaction => {
+  if (interaction.isPrimaryEntryPointCommand()) {
+    try {
+      await interaction.launchActivity();
+      log(`[Activity] Launch solicitado por ${interaction.user?.tag ?? interaction.user?.id ?? 'unknown user'}`);
+    } catch (error) {
+      log(`[Activity] Falha ao iniciar activity: ${error?.message ?? error}`);
+      try {
+        if (!interaction.deferred && !interaction.replied) {
+          await interaction.reply({ content: 'Não foi possível iniciar a Activity agora. Tente novamente em instantes.', ephemeral: true });
+        }
+      } catch {
+        // Interaction may already be closed/acknowledged
+      }
+    }
+    return;
+  }
+
   if (interaction.isChatInputCommand()) {
     const command = client.commands.get(interaction.commandName);
     if (!command) {
@@ -682,8 +797,36 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 });
 
+client.on('error', error => {
+  log(`❌ Discord client error: ${error?.message ?? error}`);
+});
+
+client.on('shardError', error => {
+  log(`❌ Discord shard error: ${error?.message ?? error}`);
+});
+
+client.on('warn', info => {
+  log(`⚠️ Discord warn: ${info}`);
+});
+
+client.on('invalidated', () => {
+  log('❌ Sessão Discord invalidada. Verifique o token/sessão no Developer Portal.');
+});
+
 log('🔐 Conectando ao Discord...');
-client.login(DISCORD_TOKEN);
+client.login(DISCORD_TOKEN)
+  .then(() => {
+    log('✅ Login no gateway solicitado com sucesso');
+  })
+  .catch(error => {
+    log(`❌ Falha no client.login: ${formatDiscordApiError(error)}`);
+  });
+
+setTimeout(() => {
+  if (!client.isReady()) {
+    log('⚠️ Timeout aguardando ClientReady. Verifique rede/VPS, token e bloqueios de gateway.');
+  }
+}, 20_000);
 
 process.once('SIGINT', async () => {
   log('🛑 SIGINT recebido. Encerrando bot...');
@@ -783,6 +926,14 @@ async function handlePlaybackButton(interaction, providedT) {
   if (interaction.customId?.startsWith('resumequeue:')) {
     return handleResumeQueueButton(interaction, t);
   }
+
+  // Handle lonely leave restore/discard buttons (doesn't require existing player)
+  if (interaction.customId?.startsWith('lonely-restore:')) {
+    return handleLonelyRestoreButton(interaction, t);
+  }
+  if (interaction.customId?.startsWith('lonely-discard:')) {
+    return handleLonelyDiscardButton(interaction, t);
+  }
   
   const player = client.kazagumo.players.get(interaction.guildId);
   if (!player) {
@@ -875,6 +1026,118 @@ async function handlePlaybackButton(interaction, providedT) {
       // Interaction expired or already fully acknowledged
     }
   }
+}
+
+async function handleLonelyRestoreButton(interaction, t) {
+  const guildId = interaction.customId.split(':')[1] || interaction.guildId;
+  const snapshot = afkSnapshots.get(guildId);
+
+  if (!snapshot) {
+    return interaction.reply({ content: t('player.lonely.snapshot_expired'), ephemeral: true });
+  }
+
+  // Check voice channel
+  const voiceChannel = interaction.member?.voice?.channel;
+  if (!voiceChannel) {
+    return interaction.reply({ content: t('common.voice_required'), ephemeral: true });
+  }
+
+  // Acknowledge and delete the prompt message
+  try { await interaction.deferUpdate(); } catch {}
+  try { await interaction.message.delete(); } catch {}
+
+  afkSnapshots.delete(guildId);
+  const guild = interaction.guild;
+
+  try {
+    // Create a new player
+    const preferredNodeName = client.lavalinkMonitor?.getLeastUsedNodeName?.();
+    const playerOptions = {
+      guildId: guild.id,
+      voiceId: voiceChannel.id,
+      textId: interaction.channelId,
+      deaf: true,
+      volume: snapshot.volume || 100
+    };
+    if (preferredNodeName) playerOptions.nodeName = preferredNodeName;
+
+    let player;
+    try {
+      player = await client.kazagumo.createPlayer(playerOptions);
+    } catch (error) {
+      if (preferredNodeName) {
+        delete playerOptions.nodeName;
+        player = await client.kazagumo.createPlayer(playerOptions);
+      } else {
+        throw error;
+      }
+    }
+
+    if (!player) {
+      log(`❌ Falha ao criar player para restaurar fila em ${guild.name}`);
+      return;
+    }
+
+    // Resolve the current track
+    const ct = snapshot.currentTrack;
+    const searchQuery = ct.uri || ct.identifier || `${ct.title} ${ct.author}`;
+    const result = await client.kazagumo.search(searchQuery, { requester: interaction.user });
+
+    if (!result?.tracks?.length) {
+      try { await player.destroy(); } catch { client.kazagumo.players.delete(guild.id); }
+      log(`❌ Falha ao resolver track para restaurar fila em ${guild.name}`);
+      return;
+    }
+
+    const track = result.tracks[0];
+    player.queue.add(track);
+
+    // Restore loop mode
+    if (snapshot.loop && snapshot.loop !== 'none') {
+      player.setLoop(snapshot.loop);
+    }
+
+    // Start playing
+    if (!player.playing && !player.paused) {
+      await player.play();
+    }
+
+    // Seek to saved position
+    if (snapshot.position > 0) {
+      await new Promise(r => setTimeout(r, 600));
+      try {
+        player.seek(snapshot.position);
+      } catch {}
+    }
+
+    // Restore queue in background
+    if (snapshot.queue.length > 0) {
+      (async () => {
+        for (const qt of snapshot.queue) {
+          try {
+            const qSearch = qt.uri || qt.identifier || `${qt.title} ${qt.author}`;
+            const qResult = await client.kazagumo.search(qSearch, { requester: interaction.user });
+            if (qResult?.tracks?.length) {
+              player.queue.add(qResult.tracks[0]);
+            }
+          } catch {}
+        }
+        log(`📋 Fila restaurada: ${snapshot.queue.length} tracks em ${guild.name}`);
+      })();
+    }
+
+    log(`▶️ Fila restaurada por ${interaction.user.tag} em ${guild.name}`);
+  } catch (error) {
+    log(`❌ Falha ao restaurar fila: ${error.message}`);
+  }
+}
+
+async function handleLonelyDiscardButton(interaction, t) {
+  const guildId = interaction.customId.split(':')[1] || interaction.guildId;
+  afkSnapshots.delete(guildId);
+
+  try { await interaction.deferUpdate(); } catch {}
+  try { await interaction.message.delete(); } catch {}
 }
 
 async function handleResumeQueueButton(interaction, t) {
@@ -1299,7 +1562,11 @@ async function buildNowPlayingMessage(player, track, t) {
 
   // Info text
   const requester = track.requester;
-  const requesterTag = requester?.toString?.() ?? (requester?.id ? `<@${requester.id}>` : t('common.unknown'));
+  const requesterTag = requester?.id
+    ? (typeof requester.toString === 'function' && requester.toString() !== '[object Object]'
+      ? requester.toString()
+      : `<@${requester.id}>`)
+    : t('common.unknown');
   const statusText = player.paused ? t('status.paused') : t('status.playing');
   const progressBar = buildProgressField(player.position, durationMs);
 
@@ -1367,7 +1634,12 @@ function buildPlaybackComponents(player, t) {
       new ButtonBuilder()
         .setCustomId('music-lyrics')
         .setEmoji({ id: '1482495799408722162', name: '8_lyrics' })
-        .setStyle(ButtonStyle.Secondary)
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setLabel(t('now_playing.web_player'))
+        .setEmoji({ id: '1483864178610540675', name: 'teto' })
+        .setURL('https://kennyy.com.br/player')
+        .setStyle(ButtonStyle.Link)
     )
   ];
 }
@@ -2082,47 +2354,23 @@ function log(message) {
 }
 
 function sendLogChannel(message) {
-  const channelId = process.env.LOG_CHANNEL_ID;
-  if (!channelId) return;
-  const channel = client.channels.cache.get(channelId);
-  if (!channel) return;
-  channel.send({ content: message }).catch(() => {});
+  sendBotLog({ content: message }).catch(() => {});
 }
 
 async function sendMusicStartLog(player, track, cardBuffer) {
-  if (!track || !client.logSettingsStore) {
+  if (!track || !process.env.BOT_LOGS_WEBHOOK_URL) {
     return;
   }
 
-  const channelId = (process.env.LOG_CHANNEL_ID || '').trim();
-  if (!channelId) {
-    return;
-  }
-
-  let enabled = false;
-  try {
-    enabled = await client.logSettingsStore.isMusicLogsEnabled();
-  } catch (error) {
-    log(`[Logs] Failed to check music log status: ${error.message}`);
-    return;
-  }
-
-  if (!enabled) {
-    return;
-  }
-
-  let logChannel = client.channels.cache.get(channelId);
-  if (!logChannel) {
+  if (client.logSettingsStore) {
+    let enabled = false;
     try {
-      logChannel = await client.channels.fetch(channelId);
+      enabled = await client.logSettingsStore.isMusicLogsEnabled();
     } catch (error) {
-      log(`[Logs] Failed to fetch log channel: ${error.message}`);
+      log(`[Logs] Failed to check music log status: ${error.message}`);
       return;
     }
-  }
-
-  if (!logChannel?.isTextBased?.()) {
-    return;
+    if (!enabled) return;
   }
 
   const trackTitle = track.title ?? 'Unknown';
@@ -2139,34 +2387,29 @@ async function sendMusicStartLog(player, track, cardBuffer) {
   const requesterLabel = formatRequesterLabel(track.requester);
 
   try {
-    // Reuse the card buffer from Now Playing (no duplicate generation)
-    const attachment = cardBuffer
-      ? new AttachmentBuilder(cardBuffer, { name: 'logcard.png' })
-      : null;
+    const embed = new EmbedBuilder()
+      .setColor(0x3498db)
+      .setTitle('🎵 Music started')
+      .addFields(
+        { name: 'Track', value: trackValue || 'Unknown', inline: false },
+        { name: 'Server', value: guildLabel || 'Unknown', inline: true },
+        { name: 'Voice Channel', value: voiceLabel, inline: true },
+        { name: 'Requested By', value: requesterLabel, inline: true }
+      )
+      .setTimestamp();
 
-    const container = new ContainerBuilder().setAccentColor(0xF53F5F);
+    const artwork = track.thumbnail ?? track.artworkUrl ?? track.displayThumbnail ?? null;
+    if (artwork) embed.setThumbnail(artwork);
 
-    container.addTextDisplayComponents(new TextDisplayBuilder().setContent('# 🎵 Music started'));
-
-    if (attachment) {
-      const gallery = new MediaGalleryBuilder()
-        .addItems(new MediaGalleryItemBuilder().setURL('attachment://logcard.png'));
-      container.addMediaGalleryComponents(gallery);
+    // Attach card image if available
+    const files = [];
+    if (cardBuffer) {
+      const attachment = new AttachmentBuilder(cardBuffer, { name: 'logcard.png' });
+      embed.setImage('attachment://logcard.png');
+      files.push(attachment);
     }
 
-    const fieldsText = [
-      `**Track** ${trackValue || 'Unknown'} ​ ​ **Server** ${guildLabel || 'Unknown'}`,
-      `**Voice Channel** ${voiceLabel} ​ ​ **Requested By** ${requesterLabel}`,
-      '',
-      `-# <t:${Math.floor(Date.now() / 1000)}:R>`
-    ].join('\n');
-    container.addTextDisplayComponents(new TextDisplayBuilder().setContent(fieldsText));
-
-    await logChannel.send({
-      components: [container],
-      files: attachment ? [attachment] : [],
-      flags: MessageFlags.IsComponentsV2
-    });
+    await sendBotLog({ embeds: [embed], files });
   } catch (error) {
     log(`[Logs] Failed to send music log: ${error.message}`);
   }
@@ -2252,6 +2495,8 @@ function setupAntiCrash() {
     if (typeof text === 'string' && text.includes('AbortError: The operation was aborted')) return true;
     // Shoukaku race condition: Player.update() fires after player is already destroyed
     if (error?.message === 'Player not found.' || (typeof text === 'string' && text.includes('Player not found.'))) return true;
+    // Shoukaku REST errors after player/session already destroyed — expected during cleanup
+    if (error?.constructor?.name === 'RestError' && error?.message === 'Forbidden') return true;
     return false;
   };
 
@@ -2348,8 +2593,11 @@ function cycleLoopMode(player) {
   return next;
 }
 
-// Lonely pause system - manages auto-pause/disconnect when bot is alone
+// Lonely leave system - bot leaves immediately when alone, watches for 2 min for someone to return
+// Saves a snapshot so the user can restore the queue if they come back
 const aloneTimeouts = new Map();
+const afkSnapshots = new Map();
+client.afkSnapshots = afkSnapshots;
 
 function countNonBotListeners(channel) {
   if (!channel?.members) return 0;
@@ -2363,7 +2611,6 @@ function countNonBotListeners(channel) {
 }
 
 function getPreferredTextChannel(player, guild) {
-  // Try the text channel associated with the player
   const textChannelId = player?.textId;
   if (textChannelId) {
     const channel = guild.channels.cache.get(textChannelId);
@@ -2375,7 +2622,6 @@ function getPreferredTextChannel(player, guild) {
     }
   }
 
-  // Try system channel
   if (guild.systemChannel) {
     const me = guild.members.me;
     if (me && guild.systemChannel.permissionsFor(me)?.has(['ViewChannel', 'SendMessages'])) {
@@ -2383,7 +2629,6 @@ function getPreferredTextChannel(player, guild) {
     }
   }
 
-  // Find first available text channel
   const me = guild.members.me;
   for (const [, channel] of guild.channels.cache) {
     if (channel.isTextBased?.() && me && channel.permissionsFor(me)?.has(['ViewChannel', 'SendMessages'])) {
@@ -2394,210 +2639,190 @@ function getPreferredTextChannel(player, guild) {
   return null;
 }
 
-async function activateLonelyPause(guild, player) {
+async function activateLonelyLeave(guild, player) {
   const voiceChannel = guild.channels.cache.get(player.voiceId);
   if (!voiceChannel) return;
 
-  // Already paused by lonely system
-  if (player.data.get('afkPauseActive')) return;
+  // Don't re-trigger if already processing
+  if (afkSnapshots.has(guild.id)) return;
 
-  player.data.set('afkPauseActive', true);
-
-  // Pause if playing
-  if (player.playing && !player.paused) {
-    try {
-      await player.pause(true);
-      log(`⏸️ Pausado por ausência em ${guild.name}`);
-    } catch (error) {
-      log(`❌ Falha ao pausar por ausência: ${error.message}`);
-    }
+  // Save snapshot BEFORE destroying
+  const currentTrack = player.queue.current;
+  if (!currentTrack) {
+    // Nothing playing, just destroy normally
+    try { await player.destroy(); } catch {}
+    return;
   }
 
-  // Send message
-  const textChannel = getPreferredTextChannel(player, guild);
-  if (textChannel) {
-    try {
-      const t = await getTranslator(client, guild.id);
-      const title = t('player.lonely.pause_title');
-      const message = t('player.lonely.pause', { call: voiceChannel.toString() });
-      
-      const embed = v2Reply({
-        color: 0xF53F5F,
-        title: `${process.env.EMOJI_CATCHILL || '<:catchill:1451442818408124557>'} ${title}`,
-        description: message,
-        timestamp: true
-      });
-      
-      const msg = await textChannel.send(embed);
-      // Store message to delete later when user returns or bot disconnects
-      player.data.set('lonelyPauseMessage', msg);
-    } catch (error) {
-      log(`❌ Falha ao enviar aviso de pausa: ${error.message}`);
-    }
+  afkSnapshots.set(guild.id, {
+    voiceId: player.voiceId,
+    textId: player.textId,
+    volume: player.volume || 100,
+    position: player.position || 0,
+    loop: player.loop || 'none',
+    currentTrack: {
+      title: currentTrack.title,
+      author: currentTrack.author,
+      uri: currentTrack.uri,
+      length: currentTrack.length,
+      identifier: currentTrack.identifier,
+      thumbnail: currentTrack.thumbnail,
+      requester: currentTrack.requester
+    },
+    queue: [...player.queue].map(t => ({
+      title: t.title,
+      author: t.author,
+      uri: t.uri,
+      length: t.length,
+      identifier: t.identifier,
+      thumbnail: t.thumbnail,
+      requester: t.requester
+    })),
+    timestamp: Date.now()
+  });
+
+  log(`📸 Snapshot salvo para ${guild.name} (pos: ${player.position}ms, fila: ${player.queue.length})`);
+
+  // Destroy player and leave voice immediately
+  cleanupProgressUpdater(player);
+  await deleteNowPlayingEmbed(player);
+  await stopLyrics(player, { deleteMessage: true });
+
+  try {
+    await player.destroy();
+    log(`🔌 Desconectado por ausência em ${guild.name}`);
+  } catch (error) {
+    log(`❌ Falha ao desconectar: ${error.message}`);
   }
 
-  // Clear existing timeout if any
+  // Set 2-minute expiry timer
   const existingTimeout = aloneTimeouts.get(guild.id);
-  if (existingTimeout) {
-    clearTimeout(existingTimeout);
-  }
+  if (existingTimeout) clearTimeout(existingTimeout);
 
-  // Set 2-minute countdown to disconnect
   const timeout = setTimeout(async () => {
-    try {
-      await lonelyDisconnect(guild.id);
-    } catch (error) {
-      log(`❌ Erro no countdown de desconexão: ${error.message}`);
+    const snapshot = afkSnapshots.get(guild.id);
+    if (!snapshot) return;
+    afkSnapshots.delete(guild.id);
+    aloneTimeouts.delete(guild.id);
+
+    // Notify that the snapshot expired
+    const textChannel = snapshot.textId ? guild.channels.cache.get(snapshot.textId) : null;
+    if (textChannel) {
+      try {
+        const t = await getTranslator(client, guild.id);
+        await textChannel.send(v2Reply({
+          color: 0xff0000,
+          title: `👋 ${t('player.lonely.expired_title')}`,
+          description: t('player.lonely.expired'),
+          timestamp: true
+        }));
+      } catch {}
     }
-  }, 120000); // 2 minutes
+    log(`⏰ Snapshot expirado para ${guild.name}`);
+  }, 120000);
 
   aloneTimeouts.set(guild.id, timeout);
 }
 
-async function cancelLonelyPause(guild, player) {
-  // Clear timeout
+async function handleUserReturned(guild, member) {
+  const snapshot = afkSnapshots.get(guild.id);
+  if (!snapshot) return;
+
+  // Clear the expiry timer (user will decide via buttons)
   const timeout = aloneTimeouts.get(guild.id);
   if (timeout) {
     clearTimeout(timeout);
     aloneTimeouts.delete(guild.id);
   }
 
-  // Not in AFK pause
-  if (!player.data.get('afkPauseActive')) return;
-
-  player.data.set('afkPauseActive', false);
-
-  // Resume if paused and has track
-  if (player.paused && player.queue.current) {
-    try {
-      await player.pause(false);
-      log(`▶️ Retomado após retorno em ${guild.name}`);
-    } catch (error) {
-      log(`❌ Falha ao retomar: ${error.message}`);
-    }
+  const textChannel = snapshot.textId ? guild.channels.cache.get(snapshot.textId) : null;
+  if (!textChannel) {
+    afkSnapshots.delete(guild.id);
+    return;
   }
 
-  // Delete pause message if exists
-  const pauseMessage = player.data.get('lonelyPauseMessage');
-  if (pauseMessage) {
-    try {
-      await pauseMessage.delete();
-      player.data.delete('lonelyPauseMessage');
-    } catch (error) {
-      // Message might already be deleted
-    }
-  }
-
-  // Send resume message
-  const voiceChannel = guild.channels.cache.get(player.voiceId);
-  const textChannel = getPreferredTextChannel(player, guild);
-  if (textChannel && voiceChannel) {
-    try {
-      const t = await getTranslator(client, guild.id);
-      const title = t('player.lonely.resume_title');
-      const message = t('player.lonely.resume', { call: voiceChannel.toString() });
-      
-      const resumePayload = v2Reply({
-        color: 0xF53F5F,
-        title: `${process.env.EMOJI_WINK || '<:7156remwink:1451443034838405330>'} ${title}`,
-        description: message,
-        timestamp: true
-      });
-      
-      const msg = await textChannel.send(resumePayload);
-      setTimeout(() => msg.delete().catch(() => {}), 10000);
-    } catch (error) {
-      log(`❌ Falha ao enviar aviso de retomada: ${error.message}`);
-    }
-  }
-}
-
-async function lonelyDisconnect(guildId) {
-  const guild = client.guilds.cache.get(guildId);
-  if (!guild) return;
-
-  const player = client.kazagumo.players.get(guildId);
-  if (!player) return;
-
-  const voiceChannel = guild.channels.cache.get(player.voiceId);
-  if (!voiceChannel) return;
-
-  // Check if still alone
-  if (countNonBotListeners(voiceChannel) > 0) return;
-
-  // Delete pause message if exists
-  const pauseMessage = player.data.get('lonelyPauseMessage');
-  if (pauseMessage) {
-    try {
-      await pauseMessage.delete();
-      player.data.delete('lonelyPauseMessage');
-    } catch (error) {
-      // Message might already be deleted
-    }
-  }
-
-  // Send disconnect message
-  const textChannel = getPreferredTextChannel(player, guild);
-  if (textChannel) {
-    try {
-      const t = await getTranslator(client, guild.id);
-      const title = t('player.lonely.disconnect_title');
-      const message = t('player.lonely.disconnect', { call: voiceChannel.toString() });
-      
-      const disconnectPayload = v2Reply({
-        color: 0xff0000,
-        title: `👋 ${title}`,
-        description: message,
-        timestamp: true
-      });
-      
-      await textChannel.send(disconnectPayload);
-    } catch (error) {
-      log(`❌ Falha ao enviar aviso de desconexão: ${error.message}`);
-    }
-  }
-
-  // Clear data
-  await deleteNowPlayingEmbed(player);
-  await stopLyrics(player, { deleteMessage: true });
-
-  // Disconnect
   try {
-    await player.destroy();
-    log(`🔌 Desconectado por ausência prolongada em ${guild.name}`);
-  } catch (error) {
-    log(`❌ Falha ao desconectar: ${error.message}`);
-  }
+    const t = await getTranslator(client, guild.id);
+    const voiceChannel = guild.channels.cache.get(snapshot.voiceId);
+    const ct = snapshot.currentTrack;
+    const posStr = formatDuration(snapshot.position);
+    const durStr = formatDuration(ct.length);
+    const queueCount = snapshot.queue.length;
 
-  // Clean up timeout
-  aloneTimeouts.delete(guildId);
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`lonely-restore:${guild.id}`)
+        .setLabel(t('player.lonely.btn_restore'))
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`lonely-discard:${guild.id}`)
+        .setLabel(t('player.lonely.btn_new'))
+        .setStyle(ButtonStyle.Secondary)
+    );
+
+    const description = t('player.lonely.return_description', {
+      user: member.toString(),
+      track: ct.title,
+      position: posStr,
+      duration: durStr,
+      queue: queueCount
+    });
+
+    const msg = await textChannel.send(v2Reply({
+        color: 0xF53F5F,
+        title: `${process.env.EMOJI_WINK || '<:7156remwink:1451443034838405330>'} ${t('player.lonely.return_title')}`,
+        description,
+        timestamp: true,
+        components: [row]
+      }));
+
+    // Auto-expire buttons after 60 seconds
+    setTimeout(async () => {
+      if (afkSnapshots.has(guild.id)) {
+        afkSnapshots.delete(guild.id);
+        try { await msg.delete(); } catch {}
+      }
+    }, 60000);
+  } catch (error) {
+    log(`❌ Falha ao enviar prompt de retorno: ${error.message}`);
+    afkSnapshots.delete(guild.id);
+  }
 }
 
 async function evaluateVoiceChannel(guild) {
   if (!guild) return;
 
   const player = client.kazagumo.players.get(guild.id);
+
   if (!player) {
-    // No player, clear any pending timeout
-    const timeout = aloneTimeouts.get(guild.id);
-    if (timeout) {
-      clearTimeout(timeout);
-      aloneTimeouts.delete(guild.id);
+    // No player — but check if someone returned to the snapshot's voice channel
+    const snapshot = afkSnapshots.get(guild.id);
+    if (snapshot) {
+      const voiceChannel = guild.channels.cache.get(snapshot.voiceId);
+      if (voiceChannel && countNonBotListeners(voiceChannel) > 0) {
+        // Find the first non-bot member who joined
+        const returningMember = voiceChannel.members.find(m => !m.user.bot && m.id !== client.user?.id);
+        if (returningMember) {
+          await handleUserReturned(guild, returningMember);
+        }
+      }
     }
     return;
   }
 
   const voiceChannel = guild.channels.cache.get(player.voiceId);
-  if (!voiceChannel) {
-    await cancelLonelyPause(guild, player);
-    return;
-  }
+  if (!voiceChannel) return;
 
   const listenerCount = countNonBotListeners(voiceChannel);
 
   if (listenerCount === 0) {
-    await activateLonelyPause(guild, player);
+    await activateLonelyLeave(guild, player);
   } else {
-    await cancelLonelyPause(guild, player);
+    // Someone is present — cancel any pending alone timer
+    const pendingTimeout = aloneTimeouts.get(guild.id);
+    if (pendingTimeout) {
+      clearTimeout(pendingTimeout);
+      aloneTimeouts.delete(guild.id);
+    }
   }
 }
