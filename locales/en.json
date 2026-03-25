@@ -82,7 +82,7 @@
       "starting": "Starting playback...",
       "no_results": "I couldn't find any results for that search.",
       "no_results_title": "Nothing found",
-      "no_results_description": "I couldn't find any results for your search.\n\nTry again with different keywords or check if the link is correct.",
+      "no_results_description": "I couldn't find any results for your search.\n\nTry again with different keywords or check if the link is correct.\n\nNote: Live streams are not supported.",
       "load_failed": "I couldn't load that track.",
       "load_failed_title": "Failed to load",
       "load_failed_description": "I couldn't load this track.\n\nThe link may be invalid or the content is unavailable.",

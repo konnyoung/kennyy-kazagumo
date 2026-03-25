@@ -82,7 +82,7 @@
       "starting": "Démarrage de la lecture...",
       "no_results": "Je n'ai trouvé aucun résultat pour cette recherche.",
       "no_results_title": "Rien trouvé",
-      "no_results_description": "Je n'ai trouvé aucun résultat pour votre recherche.\n\nRéessayez avec des mots-clés différents ou vérifiez si le lien est correct.",
+      "no_results_description": "Je n'ai trouvé aucun résultat pour votre recherche.\n\nRéessayez avec des mots-clés différents ou vérifiez si le lien est correct.\n\nRemarque : les directs ne sont pas pris en charge.",
       "load_failed": "Je n'ai pas pu charger cette piste.",
       "load_failed_title": "Échec du chargement",
       "load_failed_description": "Je n'ai pas pu charger cette piste.\n\nLe lien peut être invalide ou le contenu n'est pas disponible.",

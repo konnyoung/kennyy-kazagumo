@@ -1,21 +1,27 @@
 const LRCLIB_API_BASE = 'https://lrclib.net/api';
 const TIMESTAMP_REGEX = /\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]/g;
-const DEFAULT_POSITION_SKEW_MS = 250;
+const DEFAULT_POSITION_SKEW_MS = 300;
 
 function getApproxPositionMs(player, track) {
   if (!player) return 0;
-  const now = Date.now();
   const rawPosition = player.position || 0;
   const durationMs = track?.duration ?? track?.length ?? null;
-
-  const last = player.data?.get?.('lyricsPos');
   const isPaused = Boolean(player.paused);
 
-  if (!last || last.base !== rawPosition || isPaused) {
-    player.data?.set?.('lyricsPos', { base: rawPosition, ts: now });
-    return clampDuration(rawPosition, durationMs);
+  if (isPaused) {
+    return clampDuration(rawPosition + DEFAULT_POSITION_SKEW_MS, durationMs);
   }
 
+  const now = Date.now();
+  const last = player.data?.get?.('lyricsPos');
+
+  // Reset baseline when Kazagumo reports a new position value
+  if (!last || last.base !== rawPosition) {
+    player.data?.set?.('lyricsPos', { base: rawPosition, ts: now });
+    return clampDuration(rawPosition + DEFAULT_POSITION_SKEW_MS, durationMs);
+  }
+
+  // Interpolate: base + time elapsed since last position update + lookahead
   const elapsed = now - last.ts;
   const approx = rawPosition + elapsed + DEFAULT_POSITION_SKEW_MS;
   return clampDuration(approx, durationMs);
@@ -292,7 +298,7 @@ function findLineIndex(lines, positionMs) {
     const entry = lines[i];
     if (typeof entry.timestamp !== 'number') continue;
 
-    if (positionMs + 250 >= entry.timestamp) {
+    if (positionMs >= entry.timestamp) {
       index = i;
     } else {
       break;

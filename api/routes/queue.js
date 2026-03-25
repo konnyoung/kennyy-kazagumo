@@ -90,7 +90,7 @@ router.post('/:guildId/shuffle', requireAuth, requireVoice, requirePermission('r
  * Body: { index: number }
  * Skips to a specific track in the queue.
  */
-router.post('/:guildId/skipto', requireAuth, requireVoice, requirePermission('controlPlayer'), (req, res) => {
+router.post('/:guildId/skipto', requireAuth, requireVoice, requirePermission('controlPlayer'), async (req, res) => {
   const player = req.botClient.kazagumo.players.get(req.params.guildId);
   if (!player) return res.status(404).json({ error: 'No active player' });
 
@@ -101,7 +101,15 @@ router.post('/:guildId/skipto', requireAuth, requireVoice, requirePermission('co
 
   // Remove tracks before the target index
   player.queue.splice(0, index);
-  player.skip();
+
+  try {
+    await player.skip();
+  } catch (err) {
+    if (err?.constructor?.name === 'RestError' && err.message?.includes('too many requests')) {
+      return res.status(429).json({ error: 'Lavalink rate limited. Please wait a moment.' });
+    }
+    throw err;
+  }
 
   res.json({ skippedTo: index });
 });

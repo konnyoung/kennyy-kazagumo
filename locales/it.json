@@ -80,7 +80,7 @@
       "starting": "Avvio riproduzione...",
       "no_results": "Non sono riuscito a trovare risultati per quella ricerca.",
       "no_results_title": "Niente trovato",
-      "no_results_description": "Non sono riuscito a trovare risultati per la tua ricerca.\n\nProva di nuovo con parole chiave diverse o verifica se il link è corretto.",
+      "no_results_description": "Non sono riuscito a trovare risultati per la tua ricerca.\n\nProva di nuovo con parole chiave diverse o verifica se il link è corretto.\n\nNota: Le dirette non sono supportate.",
       "load_failed": "Non sono riuscito a caricare quella traccia.",
       "load_failed_title": "Impossibile caricare",
       "load_failed_description": "Non sono riuscito a caricare questa traccia.\n\nIl link potrebbe essere non valido o il contenuto non è disponibile.",

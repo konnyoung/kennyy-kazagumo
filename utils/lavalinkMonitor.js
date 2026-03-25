@@ -6,9 +6,8 @@ const { v2Reply } = require('./embedV2');
 const WATCHDOG_INTERVAL_MS = 15_000;
 const HEALTHCHECK_INTERVAL_MS = 30_000;
 const HEALTHCHECK_TIMEOUT_MS = 8_000;
-const NODE_BLACKLIST_MS = 120_000;
 const CONNECTED_STATE = Constants?.State?.CONNECTED ?? 1;
-const NODE_NOTIFY_TTL_MS = NODE_BLACKLIST_MS;
+const NODE_NOTIFY_TTL_MS = 120_000;
 const HEALTHCHECK_FAIL_THRESHOLD = 3; // Falhas consecutivas antes de marcar offline (aumentado de 2 para 3)
 const NODE_RECONNECT_TIMEOUT_MS = 30_000; // Tempo máximo para reconexão antes de destruir players (aumentado para 30s)
 const QUICK_RECONNECT_GRACE_MS = 15_000; // Se reconectar em menos de 15s, não notifica usuários
@@ -102,7 +101,6 @@ function createLavalinkMonitor({ client, nodeConfigs = [], log = console.log }) 
     return {
       connectedAt: null,
       disconnectedAt: null, // null = desconhecido, não offline
-      blacklistUntil: 0,
       lastError: null,
       healthcheckFailures: 0, // Contador de falhas consecutivas
       reconnectingSince: null // Timestamp de quando começou a reconectar
@@ -124,11 +122,6 @@ function createLavalinkMonitor({ client, nodeConfigs = [], log = console.log }) 
     return trackedState.get(name);
   }
 
-  function isBlacklisted(name) {
-    const entry = getNodeState(name);
-    return Boolean(entry.blacklistUntil && entry.blacklistUntil > Date.now());
-  }
-
   function markConnected(name) {
     const snapshot = getNodeState(name);
     // Só define connectedAt se não estava conectado antes
@@ -136,7 +129,6 @@ function createLavalinkMonitor({ client, nodeConfigs = [], log = console.log }) 
       snapshot.connectedAt = Date.now();
     }
     snapshot.disconnectedAt = null;
-    snapshot.blacklistUntil = 0;
     snapshot.lastError = null;
     snapshot.healthcheckFailures = 0; // Reset falhas
     snapshot.reconnectingSince = null; // Reset reconexão
@@ -159,7 +151,6 @@ function createLavalinkMonitor({ client, nodeConfigs = [], log = console.log }) 
     const snapshot = getNodeState(name);
     snapshot.connectedAt = null;
     snapshot.disconnectedAt = Date.now();
-    snapshot.blacklistUntil = Date.now() + NODE_BLACKLIST_MS;
     snapshot.lastError = reason;
     snapshot.healthcheckFailures = 0; // Reset já que confirmamos offline
     snapshot.reconnectingSince = null;
@@ -293,7 +284,6 @@ function createLavalinkMonitor({ client, nodeConfigs = [], log = console.log }) 
     const candidates = Array.from(shoukaku.nodes.values()).filter(node => {
       if (node.name === excludeName) return false;
       if (node.state !== CONNECTED_STATE) return false;
-      if (isBlacklisted(node.name)) return false;
       return true;
     });
 
@@ -304,7 +294,6 @@ function createLavalinkMonitor({ client, nodeConfigs = [], log = console.log }) 
 
   async function runWatchdog() {
     for (const name of getTrackedNames()) {
-      if (isBlacklisted(name)) continue;
       const node = shoukaku.nodes.get(name);
       if (!node) {
         const cfg = nodesByName.get(name);
@@ -329,9 +318,6 @@ function createLavalinkMonitor({ client, nodeConfigs = [], log = console.log }) 
   async function runHealthcheck() {
     const nodes = Array.from(shoukaku.nodes.values());
     for (const node of nodes) {
-      // Se já está na blacklist, ignora
-      if (isBlacklisted(node.name)) continue;
-      
       // Verifica o estado real do Shoukaku primeiro
       if (node.state !== CONNECTED_STATE) {
         // Node não está conectado segundo Shoukaku - incrementa falha
@@ -424,13 +410,10 @@ function createLavalinkMonitor({ client, nodeConfigs = [], log = console.log }) 
       let effectiveDisconnectedAt = state.disconnectedAt;
       
       if (isReallyConnected && !effectiveConnectedAt) {
-        // Shoukaku está conectado mas não temos registro - sincroniza
         effectiveConnectedAt = now;
         effectiveDisconnectedAt = null;
-        // Atualiza o tracking também
         markConnected(name);
       } else if (!isReallyConnected && !instance && effectiveConnectedAt) {
-        // Não existe instância mas achamos que está conectado - corrige
         effectiveConnectedAt = null;
         effectiveDisconnectedAt = effectiveDisconnectedAt || now;
       }
@@ -440,7 +423,6 @@ function createLavalinkMonitor({ client, nodeConfigs = [], log = console.log }) 
         state: instance?.state ?? null,
         connectedAt: effectiveConnectedAt,
         disconnectedAt: effectiveDisconnectedAt,
-        blacklistUntil: state.blacklistUntil,
         lastError: state.lastError,
         players: botStats.players,
         playingPlayers: botStats.playing,
@@ -492,7 +474,6 @@ function createLavalinkMonitor({ client, nodeConfigs = [], log = console.log }) 
     const { perNode } = collectBotStats();
     const candidates = [];
     for (const name of getTrackedNames()) {
-      if (isBlacklisted(name)) continue;
       const node = shoukaku.nodes.get(name);
       if (!node || node.state !== CONNECTED_STATE) continue;
       const counts = perNode.get(name) ?? { players: 0, playing: 0 };
@@ -514,14 +495,11 @@ function createLavalinkMonitor({ client, nodeConfigs = [], log = console.log }) 
     return candidates[0]?.name;
   }
 
-  // Verifica se um node específico está saudável
+  // Verifica se um node específico está saudável (apenas estado real do Shoukaku)
   function isNodeHealthy(nodeName) {
     const node = shoukaku.nodes.get(nodeName);
     if (!node) return false;
-    if (node.state !== CONNECTED_STATE) return false;
-    if (isBlacklisted(nodeName)) return false;
-    if (isReconnectingTooLong(nodeName)) return false;
-    return true;
+    return node.state === CONNECTED_STATE;
   }
 
   // Verifica se existe pelo menos um node saudável

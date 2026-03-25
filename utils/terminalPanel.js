@@ -160,8 +160,7 @@ function buildPanelLines(snapshot) {
     for (const node of nodes) {
       const icon = getNodeIcon(node.state);
       const uptime = buildUptimeLabel(now, node);
-      const blacklist = buildBlacklistLabel(now, node);
-      const stats = `${node.name}: ${icon} calls=${node.players ?? 0} tocando=${node.playingPlayers ?? 0} | ${uptime}${blacklist}`;
+      const stats = `${node.name}: ${icon} calls=${node.players ?? 0} tocando=${node.playingPlayers ?? 0} | ${uptime}`;
       contentLines.push(stats.trim());
     }
   }

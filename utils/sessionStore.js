@@ -122,20 +122,26 @@ function transferAdmin(guildId, fromUserId, toUserId) {
  * If they were the admin, pick the first remaining user to become admin.
  * @param {string} guildId
  * @param {string} userId - the user who left
- * @param {string[]} remainingUserIds - IDs of non-bot users still in the channel
+ * @param {{ id: string, username: string, avatarUrl: string }[]} remainingMembers
  */
-function handleUserLeave(guildId, userId, remainingUserIds) {
+function handleUserLeave(guildId, userId, remainingMembers) {
   const session = sessions.get(guildId);
   if (!session || session.adminId !== userId) return;
 
-  if (remainingUserIds.length > 0) {
-    session.adminId = remainingUserIds[0];
-    if (!session.users.has(remainingUserIds[0])) {
-      session.users.set(remainingUserIds[0], {
-        username: null,
-        avatarUrl: null,
+  if (remainingMembers.length > 0) {
+    const newAdmin = remainingMembers[0];
+    session.adminId = newAdmin.id;
+    if (!session.users.has(newAdmin.id)) {
+      session.users.set(newAdmin.id, {
+        username: newAdmin.username || null,
+        avatarUrl: newAdmin.avatarUrl || null,
         permissions: { ...DEFAULT_PERMISSIONS }
       });
+    } else {
+      // Update existing entry with fresh data
+      const u = session.users.get(newAdmin.id);
+      if (newAdmin.username) u.username = newAdmin.username;
+      if (newAdmin.avatarUrl) u.avatarUrl = newAdmin.avatarUrl;
     }
   } else {
     session.adminId = null;

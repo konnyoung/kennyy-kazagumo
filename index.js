@@ -182,6 +182,7 @@ const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
 
 const lavalinkNodes = loadLavalinkNodes();
 log(`📡 Configurados ${lavalinkNodes.length} nó(s) Lavalink`);
+client._lavalinkNodeConfigs = lavalinkNodes;
 
 client.kazagumo = new Kazagumo(
   {
@@ -205,12 +206,13 @@ client.kazagumo = new Kazagumo(
   new Connectors.DiscordJS(client),
   lavalinkNodes,
   // Shoukaku options for connection stability
+  // NOTE: reconnectInterval and voiceConnectionTimeout are in SECONDS (multiplied by 1000 internally)
   {
     resume: true,
     resumeTimeout: 30,
     resumeByLibrary: true,
     reconnectTries: 5,
-    reconnectInterval: 5000,
+    reconnectInterval: 5,
     restTimeout: 60000,
     moveOnDisconnect: true,
     userAgent: 'KennyBot/1.0',
@@ -218,7 +220,7 @@ client.kazagumo = new Kazagumo(
       rest: undefined,
       player: undefined
     },
-    voiceConnectionTimeout: 30000
+    voiceConnectionTimeout: 30
   }
 );
 
@@ -328,7 +330,11 @@ async function sendLavalinkErrorMessage(nodeName) {
 client.kazagumo.on('playerStart', async (player, track) => {
   const channel = client.channels.cache.get(player.textId);
   if (!channel) return;
-  const t = await getTranslator(client, player.guildId);
+
+  // Reuse translator from play command if available, avoid duplicate DB/cache lookup
+  let t = player.data.get('cachedTranslator');
+  if (!t) t = await getTranslator(client, player.guildId);
+  else player.data.delete('cachedTranslator');
 
   // Save queue to cache whenever a track starts (for /resumequeue)
   try {
@@ -340,6 +346,10 @@ client.kazagumo.on('playerStart', async (player, track) => {
   cleanupProgressUpdater(player);
   await deleteNowPlayingEmbed(player);
   const { payload, cardBuffer } = await buildNowPlayingMessage(player, track, t);
+
+  // Cache card buffer so progress refreshes don't regenerate the image
+  player.data.set('cachedCardBuffer', cardBuffer);
+
   try {
     const message = await channel.send(payload);
     player.data.set('nowPlayingMessage', message);
@@ -355,11 +365,13 @@ client.kazagumo.on('playerStart', async (player, track) => {
     log(`Failed to send now playing embed: ${error.message}`);
   }
 
-  await sendMusicStartLog(player, track, cardBuffer);
+  // Fire-and-forget: don't block the event handler for logging
+  sendMusicStartLog(player, track, cardBuffer).catch(() => {});
 });
 
 client.kazagumo.on('playerEnd', async player => {
   cleanupProgressUpdater(player);
+  player.data.delete('cachedCardBuffer');
   await deleteNowPlayingEmbed(player);
   await stopLyrics(player, { deleteMessage: true });
 });
@@ -684,10 +696,14 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
       const player = client.kazagumo.players.get(guild.id);
       if (player && player.voiceId === oldState.channelId) {
         const channel = guild.channels.cache.get(oldState.channelId);
-        const remainingIds = [...(channel?.members.values() || [])]
+        const remainingMembers = [...(channel?.members.values() || [])]
           .filter(m => !m.user.bot && m.id !== oldState.member.id)
-          .map(m => m.id);
-        sessionStore.handleUserLeave(guild.id, oldState.member.id, remainingIds);
+          .map(m => ({
+            id: m.id,
+            username: m.user.globalName || m.user.username,
+            avatarUrl: m.user.displayAvatarURL({ size: 128 })
+          }));
+        sessionStore.handleUserLeave(guild.id, oldState.member.id, remainingMembers);
       }
     }
     await evaluateVoiceChannel(guild);
@@ -1349,6 +1365,19 @@ const SOURCE_ICONS = {
   twitch: 'https://cdn.discordapp.com/emojis/1483286084514484286.webp'
 };
 
+// Pre-loaded source icon image cache (loaded once at startup)
+const cachedSourceIcons = new Map();
+(async () => {
+  for (const [key, url] of Object.entries(SOURCE_ICONS)) {
+    try {
+      cachedSourceIcons.set(key, await loadImage(url));
+    } catch (e) {
+      log(`[NowPlaying] Failed to preload icon ${key}: ${e.message}`);
+    }
+  }
+  log(`[NowPlaying] Preloaded ${cachedSourceIcons.size}/${Object.keys(SOURCE_ICONS).length} source icons`);
+})();
+
 // Positions based on your Figma template (2x scale: 3120x784)
 // Cover: 60px vertical margin at 1560 scale = 120px at 3120, size ~272 at 1560 = 544 at 3120
 const CARD_POSITIONS = {
@@ -1426,33 +1455,36 @@ async function generateNowPlayingCard(track, player) {
   // Font family (K2D with CJK fallback)
   const fontFamily = '"K2D", "Noto Sans CJK JP", "Segoe UI", Arial, sans-serif';
 
-  // === THUMBNAIL ===
+  // === LOAD THUMBNAIL + SOURCE ICON IN PARALLEL ===
   let thumbnail = track.thumbnail ?? track.artworkUrl ?? null;
-  if (thumbnail) {
-    // Get high quality for YouTube
-    if (track.sourceName === 'youtube') {
-      thumbnail = thumbnail
-        .replace('/default.jpg', '/maxresdefault.jpg')
-        .replace('/mqdefault.jpg', '/maxresdefault.jpg')
-        .replace('/hqdefault.jpg', '/maxresdefault.jpg')
-        .replace('/sddefault.jpg', '/maxresdefault.jpg');
-    }
-    try {
-      const thumbImg = await loadImage(thumbnail);
-      const { x, y, size } = CARD_POSITIONS.thumb;
-      // Rounded corners
-      ctx.save();
-      roundRect(ctx, x, y, size, size, 32);
-      ctx.clip();
-      ctx.drawImage(thumbImg, x, y, size, size);
-      ctx.restore();
-    } catch (e) {
-      // Fallback: draw placeholder
-      const { x, y, size } = CARD_POSITIONS.thumb;
-      ctx.fillStyle = '#333';
-      roundRect(ctx, x, y, size, size, 32);
-      ctx.fill();
-    }
+  if (thumbnail && (track.sourceName === 'youtube' || String(track.uri ?? '').includes('youtube'))) {
+    // Use hqdefault (480x360, always available) instead of maxresdefault (often 404s)
+    thumbnail = thumbnail
+      .replace('/default.jpg', '/hqdefault.jpg')
+      .replace('/mqdefault.jpg', '/hqdefault.jpg')
+      .replace('/maxresdefault.jpg', '/hqdefault.jpg')
+      .replace('/sddefault.jpg', '/hqdefault.jpg');
+  }
+
+  const sourceKey = detectTrackSource(track);
+  const [thumbImg, iconImg] = await Promise.all([
+    thumbnail ? loadImage(thumbnail).catch(() => null) : Promise.resolve(null),
+    cachedSourceIcons.get(sourceKey) ? Promise.resolve(cachedSourceIcons.get(sourceKey)) : (SOURCE_ICONS[sourceKey] ? loadImage(SOURCE_ICONS[sourceKey]).catch(() => null) : Promise.resolve(null))
+  ]);
+
+  // === THUMBNAIL ===
+  if (thumbImg) {
+    const { x, y, size } = CARD_POSITIONS.thumb;
+    ctx.save();
+    roundRect(ctx, x, y, size, size, 32);
+    ctx.clip();
+    ctx.drawImage(thumbImg, x, y, size, size);
+    ctx.restore();
+  } else if (thumbnail) {
+    const { x, y, size } = CARD_POSITIONS.thumb;
+    ctx.fillStyle = '#333';
+    roundRect(ctx, x, y, size, size, 32);
+    ctx.fill();
   }
 
   const maxTextWidth = CARD_POSITIONS.sourceIcon.x - CARD_POSITIONS.title.x - 100;
@@ -1482,21 +1514,15 @@ async function generateNowPlayingCard(track, player) {
   ctx.fillText('www.kennyy.com.br', CARD_POSITIONS.duration.x, thumbBottom);
 
   // === SOURCE ICON (tinted with #F53F5F) ===
-  const sourceKey = detectTrackSource(track);
-  const iconUrl = SOURCE_ICONS[sourceKey];
-  if (iconUrl) {
+  if (iconImg) {
     try {
-      const iconImg = await loadImage(iconUrl);
       const { x, y, size } = CARD_POSITIONS.sourceIcon;
-      // Draw icon to a temporary canvas and tint it
       const iconCanvas = createCanvas(size, size);
       const iconCtx = iconCanvas.getContext('2d');
       iconCtx.drawImage(iconImg, 0, 0, size, size);
-      // Apply tint: draw color on top using source-atop to only color non-transparent pixels
       iconCtx.globalCompositeOperation = 'source-atop';
       iconCtx.fillStyle = '#F53F5F';
       iconCtx.fillRect(0, 0, size, size);
-      // Draw tinted icon onto main canvas
       ctx.drawImage(iconCanvas, x, y, size, size);
     } catch (e) {
       // Icon failed to load, skip
@@ -1528,7 +1554,7 @@ function truncateCanvasText(ctx, text, maxWidth) {
   return truncated;
 }
 
-async function buildNowPlayingMessage(player, track, t) {
+async function buildNowPlayingMessage(player, track, t, existingCardBuffer) {
   if (!track) {
     return {
       payload: {
@@ -1543,8 +1569,8 @@ async function buildNowPlayingMessage(player, track, t) {
 
   const durationMs = Number.isFinite(track.duration) ? track.duration : track.length ?? 0;
 
-  // Generate now playing card image
-  const cardBuffer = await generateNowPlayingCard(track, player);
+  // Reuse cached card buffer on refresh (image is static per track)
+  const cardBuffer = existingCardBuffer || await generateNowPlayingCard(track, player);
   const attachment = new AttachmentBuilder(cardBuffer, { name: 'nowplaying.png' });
 
   // Build Components V2 layout
@@ -1638,7 +1664,7 @@ function buildPlaybackComponents(player, t) {
       new ButtonBuilder()
         .setLabel(t('now_playing.web_player'))
         .setEmoji({ id: '1483864178610540675', name: 'teto' })
-        .setURL('https://kennyy.com.br/player')
+        .setURL(`https://discord.com/activities/${client.user.id}`)
         .setStyle(ButtonStyle.Link)
     )
   ];
@@ -2134,7 +2160,9 @@ async function refreshNowPlayingMessage(player) {
     player.data.delete('nowPlayingMessage');
     return;
   }
-  const { payload } = await buildNowPlayingMessage(player, track, t);
+  // Reuse cached card buffer — no need to regenerate the image for the same track
+  const cachedCardBuffer = player.data.get('cachedCardBuffer') || null;
+  const { payload } = await buildNowPlayingMessage(player, track, t, cachedCardBuffer);
   await message.edit(payload);
 }
 
@@ -2497,6 +2525,8 @@ function setupAntiCrash() {
     if (error?.message === 'Player not found.' || (typeof text === 'string' && text.includes('Player not found.'))) return true;
     // Shoukaku REST errors after player/session already destroyed — expected during cleanup
     if (error?.constructor?.name === 'RestError' && error?.message === 'Forbidden') return true;
+    // Lavalink rate limit — transient, not a crash
+    if (error?.constructor?.name === 'RestError' && typeof error?.message === 'string' && error.message.includes('too many requests')) return true;
     return false;
   };
 

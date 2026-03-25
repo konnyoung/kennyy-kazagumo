@@ -10,6 +10,7 @@ const lyricsRoutes = require('./routes/lyrics');
 const playlistRoutes = require('./routes/playlists');
 const permissionsRoutes = require('./routes/permissions');
 const assetsRoutes = require('./routes/assets');
+const feedbackRoutes = require('./routes/feedback');
 
 function createApiServer(client) {
   const app = express();
@@ -56,6 +57,7 @@ function createApiServer(client) {
   app.use('/api/playlists', playlistRoutes);
   app.use('/api/permissions', permissionsRoutes);
   app.use('/api/assets', assetsRoutes);
+  app.use('/api/feedback', feedbackRoutes);
 
   // Error handler
   app.use((err, req, res, _next) => {

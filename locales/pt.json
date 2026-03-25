@@ -82,7 +82,7 @@
       "starting": "Iniciando reprodução...",
       "no_results": "Não consegui encontrar nenhum resultado para essa pesquisa.",
       "no_results_title": "Nada encontrado",
-      "no_results_description": "Não consegui encontrar resultados para sua pesquisa.\n\nTente novamente com palavras-chave diferentes ou verifique se o link está correto.",
+      "no_results_description": "Não consegui encontrar resultados para sua pesquisa.\n\nTente novamente com palavras-chave diferentes ou verifique se o link está correto.\n\nObs.: Lives não são suportadas.",
       "load_failed": "Não consegui carregar essa faixa.",
       "load_failed_title": "Falha ao carregar",
       "load_failed_description": "Não consegui carregar esta faixa.\n\nO link pode estar inválido ou o conteúdo está indisponível.",

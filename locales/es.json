@@ -82,7 +82,7 @@
       "starting": "Iniciando reproducción...",
       "no_results": "No pude encontrar ningún resultado para esa búsqueda.",
       "no_results_title": "Nada encontrado",
-      "no_results_description": "No pude encontrar resultados para tu búsqueda.\n\nIntenta de nuevo con palabras clave diferentes o verifica si el enlace es correcto.",
+      "no_results_description": "No pude encontrar resultados para tu búsqueda.\n\nIntenta de nuevo con palabras clave diferentes o verifica si el enlace es correcto.\n\nNota: Las transmisiones en vivo no son compatibles.",
       "load_failed": "No pude cargar esa pista.",
       "load_failed_title": "Error al cargar",
       "load_failed_description": "No pude cargar esta pista.\n\nEl enlace puede ser inválido o el contenido no está disponible.",

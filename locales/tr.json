@@ -80,7 +80,7 @@
       "starting": "Oynatma başlatılıyor...",
       "no_results": "Bu arama için sonuç bulamadım.",
       "no_results_title": "Hiçbir şey bulunamadı",
-      "no_results_description": "Aramanız için sonuç bulamadım.\n\nFarklı anahtar kelimelerle tekrar deneyin veya bağlantının doğru olup olmadığını kontrol edin.",
+      "no_results_description": "Aramanız için sonuç bulamadım.\n\nFarklı anahtar kelimelerle tekrar deneyin veya bağlantının doğru olup olmadığını kontrol edin.\n\nNot: Canlı yayınlar desteklenmiyor.",
       "load_failed": "Bu parçayı yükleyemedim.",
       "load_failed_title": "Yükleme başarısız",
       "load_failed_description": "Bu parçayı yükleyemedim.\n\nBağlantı geçersiz olabilir veya içerik kullanılamıyor.",

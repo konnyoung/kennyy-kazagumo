@@ -314,7 +314,7 @@ router.post('/:id/play-from', requireAuth, async (req, res, next) => {
 
     // Skip current track to start playing from our first added track
     if (player.playing || player.paused) {
-      player.skip();
+      await player.skip();
     } else {
       await player.play();
     }

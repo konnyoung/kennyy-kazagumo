@@ -28,6 +28,10 @@ module.exports = {
     
     const t = await getTranslator(client, interaction.guildId);
     const query = interaction.options.getString('query', true);
+    if (isLiveLikeUrl(query)) {
+      const noResultsPayload = v2Reply({ color: 0x00BFFF, title: `${process.env.EMOJI_PANIC || '<a:panic:1451081526522417252>'} ${t('commands.play.no_results_title')}`, description: t('commands.play.no_results_description') });
+      return interaction.editReply(noResultsPayload);
+    }
     const voiceChannel = interaction.member?.voice?.channel;
 
     if (!voiceChannel) {
@@ -75,9 +79,13 @@ module.exports = {
     const hadActivePlayer = Boolean(player && (player.queue.length || player.playing || player.paused));
     const preferredNodeName = client.lavalinkMonitor?.getLeastUsedNodeName?.();
 
-    // Check if any healthy node is available before proceeding
-    const hasAvailableNode = client.lavalinkMonitor?.hasHealthyNode?.() ?? 
+    // Quick check: is any node already connected?
+    const anyNodeConnected = () =>
       Array.from(client.kazagumo.shoukaku.nodes.values()).some(n => n.state === 1);
+    let hasAvailableNode = anyNodeConnected();
+    if (!hasAvailableNode) {
+      hasAvailableNode = await attemptLavalinkRecovery(client);
+    }
     if (!hasAvailableNode) {
       const noNodePayload = v2Reply({ color: 0xff6b6b, title: `${process.env.EMOJI_CRY || '<:cry:1453534083983474867>'} ${t('errors.lavalink_error_title')}`, description: t('errors.lavalink_error_description') });
       return interaction.editReply(noNodePayload);
@@ -88,26 +96,17 @@ module.exports = {
     }
 
     if (!player) {
-      const playerOptions = {
-        guildId: interaction.guildId,
-        voiceId: voiceChannel.id,
-        textId: interaction.channelId,
-        deaf: true,
-        volume: 100
-      };
-      if (preferredNodeName) {
-        playerOptions.nodeName = preferredNodeName;
-      }
-
       try {
-        player = await client.kazagumo.createPlayer(playerOptions);
+        player = await createPlayerWithRecovery(client, {
+          guildId: interaction.guildId,
+          voiceId: voiceChannel.id,
+          textId: interaction.channelId,
+          deaf: true,
+          volume: 100
+        });
       } catch (error) {
-        if (preferredNodeName) {
-          delete playerOptions.nodeName;
-          player = await client.kazagumo.createPlayer(playerOptions);
-        } else {
-          throw error;
-        }
+        const lavalinkPayload = v2Reply({ color: 0xff6b6b, title: `${process.env.EMOJI_CRY || '<:cry:1453534083983474867>'} ${t('errors.lavalink_error_title')}`, description: t('errors.lavalink_error_description') });
+        return interaction.editReply(lavalinkPayload);
       }
     } else {
       if (player.voiceId !== voiceChannel.id) {
@@ -121,14 +120,6 @@ module.exports = {
     const searchingPayload = v2Reply({ color: 0xF53F5F, description: `# ${emoji} ${t('commands.play.searching')}` });
     await interaction.editReply(searchingPayload);
 
-    // Helper to update the stage message
-    const updateStage = async (key) => {
-      try {
-        const stagePayload = v2Reply({ color: 0xF53F5F, description: `# ${emoji} ${t(key)}` });
-        await interaction.editReply(stagePayload);
-      } catch {}
-    };
-
     try {
       const requester = interaction.user;
       const isUrl = /^https?:\/\//.test(query);
@@ -137,8 +128,9 @@ module.exports = {
         searchOptions.source = 'spsearch:';
       }
       const result = await client.kazagumo.search(query, searchOptions);
+      const availableTracks = (result.tracks || []).filter((track) => !isStreamTrack(track));
 
-      if (!result.tracks?.length) {
+      if (!availableTracks.length) {
         const noResultsPayload = v2Reply({ color: 0x00BFFF, title: `${process.env.EMOJI_PANIC || '<a:panic:1451081526522417252>'} ${t('commands.play.no_results_title')}`, description: t('commands.play.no_results_description') });
         await interaction.editReply(noResultsPayload);
         if (player && !hadActivePlayer) {
@@ -147,17 +139,14 @@ module.exports = {
         return;
       }
 
-      // Stage 2: Loading track
-      await updateStage('commands.play.loading_track');
-
       let addedTracks = [];
       if (result.type === 'PLAYLIST') {
-        for (const track of result.tracks) {
+        for (const track of availableTracks) {
           player.queue.add(track);
         }
-        addedTracks = result.tracks;
+        addedTracks = availableTracks;
       } else {
-        const track = result.tracks[0];
+        const track = availableTracks[0];
         if (!track) {
           const loadFailedPayload = v2Reply({ color: 0x00BFFF, title: `${process.env.EMOJI_PANIC || '<a:panic:1451081526522417252>'} ${t('commands.play.load_failed_title')}`, description: t('commands.play.load_failed_description') });
           await interaction.editReply(loadFailedPayload);
@@ -171,9 +160,8 @@ module.exports = {
       }
 
       if (!player.playing && !player.paused) {
-        // Stage 3: Starting playback
-        await updateStage('commands.play.starting');
-        // Store interaction so playerStart can delete it after sending Now Playing
+        // Store translator + interaction so playerStart can reuse them
+        player.data.set('cachedTranslator', t);
         player.data.set('searchingInteraction', interaction);
         await player.play();
       }
@@ -216,6 +204,98 @@ module.exports = {
     }
   }
 };
+
+async function createPlayerWithRecovery(client, baseOptions) {
+  const preferredNodeName = client.lavalinkMonitor?.getLeastUsedNodeName?.();
+  const playerOptions = { ...baseOptions };
+  if (preferredNodeName) {
+    playerOptions.nodeName = preferredNodeName;
+  }
+
+  try {
+    return await client.kazagumo.createPlayer(playerOptions);
+  } catch (firstError) {
+    // Attempt recovery and retry without pinned nodeName
+    const recovered = await attemptLavalinkRecovery(client);
+    if (!recovered) throw firstError;
+
+    const fallbackOptions = { ...baseOptions };
+    return await client.kazagumo.createPlayer(fallbackOptions);
+  }
+}
+
+async function attemptLavalinkRecovery(client, maxWaitMs = 6000) {
+  const shoukaku = client?.kazagumo?.shoukaku;
+  if (!shoukaku) return false;
+
+  const CONNECTED = 1;
+  const CONNECTING = 0;
+  const isConnected = () =>
+    Array.from(shoukaku.nodes.values()).some(n => n.state === CONNECTED);
+
+  // Fast path: already connected
+  if (isConnected()) return true;
+
+  // Re-add nodes that Shoukaku removed after exhausting reconnect tries
+  const nodeConfigs = client._lavalinkNodeConfigs;
+  if (nodeConfigs) {
+    for (const cfg of nodeConfigs) {
+      if (!shoukaku.nodes.has(cfg.name)) {
+        try {
+          shoukaku.addNode(cfg);
+        } catch {}
+      }
+    }
+  }
+
+  // Trigger connect on nodes stuck in DISCONNECTED (3) or DISCONNECTING (2)
+  for (const node of shoukaku.nodes.values()) {
+    if (node.state === CONNECTED || node.state === CONNECTING) continue;
+    try {
+      node.connect().catch(() => {});
+    } catch {}
+  }
+
+  // Poll until a node becomes CONNECTED or timeout
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    if (isConnected()) return true;
+    await wait(300);
+  }
+
+  return false;
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isLiveLikeUrl(query) {
+  if (!/^https?:\/\//i.test(query || '')) return false;
+
+  try {
+    const url = new URL(query);
+    const host = url.hostname.toLowerCase();
+    const path = url.pathname.toLowerCase();
+
+    if (host.includes('twitch.tv') || host.includes('kick.com') || host.includes('trovo.live')) {
+      return true;
+    }
+
+    if (host.includes('youtube.com') || host.includes('youtu.be')) {
+      if (path.startsWith('/live') || path.includes('/live/')) return true;
+      if (url.searchParams.get('live') === '1') return true;
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+}
+
+function isStreamTrack(track) {
+  return Boolean(track?.isStream ?? track?.info?.isStream ?? track?.raw?.info?.isStream);
+}
 
 function buildQueuedEmbed({ tracks, playlistName, requester, queueLength, t }) {
   const firstTrack = tracks[0];

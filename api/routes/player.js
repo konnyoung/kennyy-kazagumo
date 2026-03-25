@@ -25,6 +25,48 @@ function serializeTrack(track) {
   };
 }
 
+function clampQueuePosition(queue, position) {
+  const max = Math.max(0, queue.length);
+  if (!Number.isFinite(position)) return max;
+  return Math.min(Math.max(0, Math.floor(position)), max);
+}
+
+function insertTracksAtPosition(queue, tracks, position) {
+  const list = Array.isArray(tracks) ? tracks : [tracks];
+  const index = clampQueuePosition(queue, position);
+  queue.splice(index, 0, ...list);
+  if (typeof queue.emitChanges === 'function') {
+    queue.emitChanges();
+  }
+}
+
+function isLiveLikeUrl(query) {
+  if (!/^https?:\/\//i.test(query || '')) return false;
+
+  try {
+    const url = new URL(query);
+    const host = url.hostname.toLowerCase();
+    const path = url.pathname.toLowerCase();
+
+    if (host.includes('twitch.tv') || host.includes('kick.com') || host.includes('trovo.live')) {
+      return true;
+    }
+
+    if (host.includes('youtube.com') || host.includes('youtu.be')) {
+      if (path.startsWith('/live') || path.includes('/live/')) return true;
+      if (url.searchParams.get('live') === '1') return true;
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+}
+
+function isStreamTrack(track) {
+  return Boolean(track?.isStream ?? track?.info?.isStream ?? track?.raw?.info?.isStream);
+}
+
 /**
  * GET /api/player/:guildId
  * Returns current player state (playing, paused, track, position, volume, loop).
@@ -59,6 +101,9 @@ router.post('/:guildId/play', requireAuth, requireVoice, requirePermission('addT
   try {
     const { query } = req.body;
     if (!query) return res.status(400).json({ error: 'Missing query' });
+    if (isLiveLikeUrl(query)) {
+      return res.status(400).json({ error: 'Live streams are disabled on this bot' });
+    }
 
     const client = req.botClient;
     const guild = req.guild;
@@ -97,23 +142,34 @@ router.post('/:guildId/play', requireAuth, requireVoice, requirePermission('addT
     if (!isUrl) searchOpts.source = 'spsearch:';
 
     const result = await client.kazagumo.search(query, searchOpts);
+    const availableTracks = (result.tracks || []).filter((track) => !isStreamTrack(track));
 
-    if (!result?.tracks?.length) {
+    if (!availableTracks.length) {
       return res.status(404).json({ error: 'No results found' });
     }
 
     const forcePlay = req.body.forcePlay === true;
+    const position = typeof req.body.position === 'number' ? req.body.position : null;
     const added = [];
     if (result.type === 'PLAYLIST') {
-      for (const track of result.tracks) {
-        player.queue.add(track);
-        added.push(serializeTrack(track));
+      if (position !== null) {
+        insertTracksAtPosition(player.queue, availableTracks, position);
+        for (const track of availableTracks) {
+          added.push(serializeTrack(track));
+        }
+      } else {
+        for (const track of availableTracks) {
+          player.queue.add(track);
+          added.push(serializeTrack(track));
+        }
       }
     } else {
-      const track = result.tracks[0];
+      const track = availableTracks[0];
       if (forcePlay && (player.playing || player.paused)) {
-        player.queue.add(track, 0);
-        player.skip();
+        insertTracksAtPosition(player.queue, track, 0);
+        await player.skip();
+      } else if (position !== null) {
+        insertTracksAtPosition(player.queue, track, position);
       } else {
         player.queue.add(track);
       }
@@ -149,8 +205,15 @@ router.post('/:guildId/pause', requireAuth, requireVoice, requirePermission('con
   const player = req.botClient.kazagumo.players.get(req.params.guildId);
   if (!player) return res.status(404).json({ error: 'No active player' });
 
-  await player.pause(true);
-  res.json({ paused: true });
+  try {
+    await player.pause(true);
+    res.json({ paused: true });
+  } catch (err) {
+    if (err?.constructor?.name === 'RestError' && err.message?.includes('too many requests')) {
+      return res.status(429).json({ error: 'Lavalink rate limited. Please wait a moment.' });
+    }
+    throw err;
+  }
 });
 
 /**
@@ -160,19 +223,33 @@ router.post('/:guildId/resume', requireAuth, requireVoice, requirePermission('co
   const player = req.botClient.kazagumo.players.get(req.params.guildId);
   if (!player) return res.status(404).json({ error: 'No active player' });
 
-  await player.pause(false);
-  res.json({ paused: false });
+  try {
+    await player.pause(false);
+    res.json({ paused: false });
+  } catch (err) {
+    if (err?.constructor?.name === 'RestError' && err.message?.includes('too many requests')) {
+      return res.status(429).json({ error: 'Lavalink rate limited. Please wait a moment.' });
+    }
+    throw err;
+  }
 });
 
 /**
  * POST /api/player/:guildId/skip
  */
-router.post('/:guildId/skip', requireAuth, requireVoice, requirePermission('controlPlayer'), (req, res) => {
+router.post('/:guildId/skip', requireAuth, requireVoice, requirePermission('controlPlayer'), async (req, res) => {
   const player = req.botClient.kazagumo.players.get(req.params.guildId);
   if (!player) return res.status(404).json({ error: 'No active player' });
 
-  player.skip();
-  res.json({ skipped: true });
+  try {
+    await player.skip();
+    res.json({ skipped: true });
+  } catch (err) {
+    if (err?.constructor?.name === 'RestError' && err.message?.includes('too many requests')) {
+      return res.status(429).json({ error: 'Lavalink rate limited. Please wait a moment.' });
+    }
+    throw err;
+  }
 });
 
 /**
@@ -197,7 +274,7 @@ router.post('/:guildId/stop', requireAuth, requireVoice, requirePermission('cont
  * POST /api/player/:guildId/seek
  * Body: { position: number } (milliseconds)
  */
-router.post('/:guildId/seek', requireAuth, requireVoice, requirePermission('controlPlayer'), (req, res) => {
+router.post('/:guildId/seek', requireAuth, requireVoice, requirePermission('controlPlayer'), async (req, res) => {
   const player = req.botClient.kazagumo.players.get(req.params.guildId);
   if (!player) return res.status(404).json({ error: 'No active player' });
 
@@ -206,15 +283,22 @@ router.post('/:guildId/seek', requireAuth, requireVoice, requirePermission('cont
     return res.status(400).json({ error: 'Invalid position' });
   }
 
-  player.seek(position);
-  res.json({ position });
+  try {
+    await player.seek(position);
+    res.json({ position });
+  } catch (err) {
+    if (err?.constructor?.name === 'RestError' && err.message?.includes('too many requests')) {
+      return res.status(429).json({ error: 'Lavalink rate limited. Please wait a moment.' });
+    }
+    throw err;
+  }
 });
 
 /**
  * POST /api/player/:guildId/volume
  * Body: { volume: number } (0-150)
  */
-router.post('/:guildId/volume', requireAuth, requireVoice, requirePermission('controlPlayer'), (req, res) => {
+router.post('/:guildId/volume', requireAuth, requireVoice, requirePermission('controlPlayer'), async (req, res) => {
   const player = req.botClient.kazagumo.players.get(req.params.guildId);
   if (!player) return res.status(404).json({ error: 'No active player' });
 
@@ -223,8 +307,15 @@ router.post('/:guildId/volume', requireAuth, requireVoice, requirePermission('co
     return res.status(400).json({ error: 'Volume must be between 0 and 150' });
   }
 
-  player.setVolume(volume);
-  res.json({ volume });
+  try {
+    await player.setVolume(volume);
+    res.json({ volume });
+  } catch (err) {
+    if (err?.constructor?.name === 'RestError' && err.message?.includes('too many requests')) {
+      return res.status(429).json({ error: 'Lavalink rate limited. Please wait a moment.' });
+    }
+    throw err;
+  }
 });
 
 /**
